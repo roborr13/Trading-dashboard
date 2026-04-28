@@ -4,11 +4,11 @@ import yfinance as yf
 
 import pandas as pd
 
-import time
+st.set_page_config(page_title="Trading Scanner", layout="wide")
 
-st.set_page_config(page_title="Trading Dashboard", layout="wide")
+st.title("📈 Trading Scanner — Next Level")
 
-st.title("📈 Trading Dashboard (LIVE)")
+st.caption("Paper-trading scanner only. No real trades are placed.")
 
 st.sidebar.header("Settings")
 
@@ -34,8 +34,6 @@ stop_loss_percent = st.sidebar.slider("Stop loss (%)", 0.5, 5.0, 1.0)
 
 target_percent = st.sidebar.slider("Target (%)", 0.5, 10.0, 2.0)
 
-auto_refresh = st.sidebar.checkbox("Auto Refresh (every 60s)", value=True)
-
 def get_intraday_data(symbol):
 
     try:
@@ -54,37 +52,133 @@ def get_intraday_data(symbol):
 
         return None
 
-def get_signal(change_percent):
+def get_20m_change(symbol):
 
-    if change_percent >= 0.10:
+    data = get_intraday_data(symbol)
 
-        return "🚀 STRONG BUY"
+    if data is None:
 
-    elif change_percent >= 0.03:
+        return None, None
 
-        return "🟢 BUY"
+    price = data["Close"].iloc[-1]
 
-    elif change_percent <= -0.10:
+    recent = data["Close"].iloc[-4:]
 
-        return "🔻 STRONG SELL"
+    start_price = recent.iloc[0]
 
-    elif change_percent <= -0.03:
+    end_price = recent.iloc[-1]
 
-        return "🔴 SELL"
+    change_percent = ((end_price - start_price) / start_price) * 100
+
+    return float(price), float(change_percent)
+
+def market_direction(spy_change):
+
+    if spy_change is None:
+
+        return "UNKNOWN"
+
+    if spy_change >= 0.05:
+
+        return "BULLISH"
+
+    elif spy_change <= -0.05:
+
+        return "BEARISH"
 
     else:
 
-        return "⚪ NO TRADE"
+        return "CHOPPY"
 
-def run_scan():
+def get_signal(change_percent, market):
+
+    confidence = 0
+
+    if change_percent >= 0.10:
+
+        signal = "🚀 STRONG BUY"
+
+        confidence = 85
+
+    elif change_percent >= 0.03:
+
+        signal = "🟢 BUY"
+
+        confidence = 65
+
+    elif change_percent <= -0.10:
+
+        signal = "🔻 STRONG SELL"
+
+        confidence = 85
+
+    elif change_percent <= -0.03:
+
+        signal = "🔴 SELL"
+
+        confidence = 65
+
+    else:
+
+        signal = "⚪ NO TRADE"
+
+        confidence = 25
+
+    if market == "BULLISH" and "BUY" in signal:
+
+        confidence += 10
+
+    elif market == "BEARISH" and "SELL" in signal:
+
+        confidence += 10
+
+    elif market == "BULLISH" and "SELL" in signal:
+
+        confidence -= 20
+
+    elif market == "BEARISH" and "BUY" in signal:
+
+        confidence -= 20
+
+    confidence = max(0, min(confidence, 100))
+
+    if confidence >= 80 and signal != "⚪ NO TRADE":
+
+        quality = "A SETUP"
+
+    elif confidence >= 60 and signal != "⚪ NO TRADE":
+
+        quality = "B SETUP"
+
+    else:
+
+        quality = "PASS"
+
+    return signal, confidence, quality
+
+if st.button("Run Scan"):
+
+    spy_price, spy_change = get_20m_change("SPY")
+
+    market = market_direction(spy_change)
+
+    st.subheader("Market Direction")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("SPY Price", "-" if spy_price is None else round(spy_price, 2))
+
+    c2.metric("SPY 20m Change %", "-" if spy_change is None else round(spy_change, 3))
+
+    c3.metric("Market", market)
 
     results = []
 
     for symbol in symbols:
 
-        data = get_intraday_data(symbol)
+        price, change_percent = get_20m_change(symbol)
 
-        if data is None:
+        if price is None or change_percent is None:
 
             results.append({
 
@@ -96,6 +190,10 @@ def run_scan():
 
                 "Signal": "DATA ERROR",
 
+                "Confidence": "-",
+
+                "Quality": "-",
+
                 "Stop Loss": "-",
 
                 "Target": "-",
@@ -106,19 +204,7 @@ def run_scan():
 
             continue
 
-        price = data["Close"].iloc[-1]
-
-        recent = data["Close"].iloc[-4:]
-
-        start_price = recent.iloc[0]
-
-        end_price = recent.iloc[-1]
-
-        change = end_price - start_price
-
-        change_percent = (change / start_price) * 100
-
-        signal = get_signal(change_percent)
+        signal, confidence, quality = get_signal(change_percent, market)
 
         risk_amount = account_size * (risk_percent / 100)
 
@@ -130,42 +216,42 @@ def run_scan():
 
             "Symbol": symbol,
 
-            "Price": round(float(price), 2),
+            "Price": round(price, 2),
 
-            "20m Change %": round(float(change_percent), 3),
+            "20m Change %": round(change_percent, 3),
 
             "Signal": signal,
 
-            "Stop Loss": round(float(stop_loss), 2),
+            "Confidence": confidence,
 
-            "Target": round(float(target), 2),
+            "Quality": quality,
 
-            "Risk $": round(float(risk_amount), 2)
+            "Stop Loss": round(stop_loss, 2),
+
+            "Target": round(target, 2),
+
+            "Risk $": round(risk_amount, 2)
 
         })
 
-    return pd.DataFrame(results)
+    df = pd.DataFrame(results)
 
-placeholder = st.empty()
+    st.subheader("Scanner Results")
 
-while True:
+    st.dataframe(df, use_container_width=True)
 
-    df = run_scan()
+    st.subheader("Best Setups")
 
-    with placeholder.container():
+    best = df[df["Quality"].isin(["A SETUP", "B SETUP"])]
 
-        st.subheader("Scan Results (20-Min Momentum)")
+    if best.empty:
 
-        st.dataframe(df, use_container_width=True)
+        st.info("No clean setups right now. That is a valid trading signal: wait.")
 
-        st.subheader("Notes / Journal")
+    else:
 
-        st.text_area("Write your thoughts here after reviewing trades")
+        st.dataframe(best, use_container_width=True)
 
-    if not auto_refresh:
+st.subheader("Notes / Journal")
 
-        break
-
-    time.sleep(60)
-
-    st.rerun()
+st.text_area("Write your thoughts here after reviewing trades")
