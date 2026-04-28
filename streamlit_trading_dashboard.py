@@ -16,7 +16,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Only scans during market hours. High-quality alerts only.")
+st.caption("After-hours monitoring ON (no alerts outside market hours)")
 
 # ---------- SETTINGS ----------
 
@@ -31,8 +31,6 @@ symbols_input = st.sidebar.text_input(
 )
 
 symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
-
-auto_refresh = st.sidebar.checkbox("Auto Refresh Every 60s", False)
 
 send_texts = st.sidebar.checkbox("Send SMS Alerts", True)
 
@@ -50,11 +48,9 @@ stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
 
 reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
-st.sidebar.subheader("Alert Settings")
-
 minimum_score = 40
 
-cooldown_minutes = st.sidebar.slider("Alert Cooldown Minutes", 5, 60, 15)
+cooldown_minutes = 15
 
 # ---------- STATE ----------
 
@@ -314,7 +310,7 @@ def can_alert(symbol, signal):
 
     return False
 
-# ---------- SCAN ----------
+# ---------- RUN ----------
 
 def run():
 
@@ -324,11 +320,13 @@ def run():
 
     st.metric("Current ET Time", now_et.strftime("%I:%M %p"))
 
-    if not open_now:
+    if open_now:
 
-        st.warning("Market closed — no scans and no alerts.")
+        st.success("Market OPEN — alerts enabled")
 
-        return
+    else:
+
+        st.warning("After hours — monitoring only (no alerts)")
 
     spy = analyze("SPY")
 
@@ -382,9 +380,9 @@ def run():
 
     st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
 
-    if market == "CHOPPY":
+    if not open_now:
 
-        st.warning("CHOPPY — no trades")
+        st.warning("After hours — SMS blocked")
 
     elif "STRONG" not in top["Signal"]:
 
@@ -402,12 +400,4 @@ def run():
 
     st.dataframe(df)
 
-# ---------- RUN ----------
-
 run()
-
-if auto_refresh:
-
-    time.sleep(60)
-
-    st.rerun()
