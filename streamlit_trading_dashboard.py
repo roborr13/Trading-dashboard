@@ -8,13 +8,17 @@ st.set_page_config(page_title="Trading Dashboard", layout="wide")
 
 st.title("📈 Trading Dashboard")
 
-# Sidebar settings
-
 st.sidebar.header("Settings")
 
-symbols_input = st.sidebar.text_input("Watchlist (comma separated)", "SPY,QQQ,AAPL,MSFT,NVDA,TSLA")
+symbols_input = st.sidebar.text_input(
 
-symbols = [s.strip().upper() for s in symbols_input.split(",")]
+    "Watchlist",
+
+    "SPY, QQQ, AAPL, MSFT, NVDA, TSLA"
+
+)
+
+symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
 st.sidebar.subheader("Risk Settings")
 
@@ -22,17 +26,35 @@ account_size = st.sidebar.number_input("Account Size ($)", value=1000)
 
 risk_percent = st.sidebar.slider("Risk per trade (%)", 0.5, 5.0, 1.0)
 
-# Function to get data
-
-@st.cache_data
-
 def get_data(symbol):
 
-    data = yf.download(symbol, period="1d", interval="5m")
+    try:
 
-    return data
+        data = yf.download(
 
-# Scan button
+            symbol,
+
+            period="5d",
+
+            interval="5m",
+
+            progress=False,
+
+            auto_adjust=True,
+
+            threads=False
+
+        )
+
+        if data is None or data.empty:
+
+            return None
+
+        return data
+
+    except Exception:
+
+        return None
 
 if st.button("Run Scan"):
 
@@ -40,33 +62,43 @@ if st.button("Run Scan"):
 
     for symbol in symbols:
 
+        data = get_data(symbol)
+
+        if data is None or len(data) < 2:
+
+            results.append({
+
+                "Symbol": symbol,
+
+                "Price": "-",
+
+                "Change": "-",
+
+                "Signal": "DATA ERROR",
+
+                "Risk $": "-"
+
+            })
+
+            continue
+
         try:
 
-            data = get_data(symbol)
+            price = float(data["Close"].iloc[-1])
 
-            if data.empty:
+            previous_price = float(data["Close"].iloc[-2])
 
-                continue
-
-            latest = data.iloc[-1]
-
-            prev = data.iloc[-2]
-
-            price = latest["Close"]
-
-            prev_price = prev["Close"]
-
-            change = price - prev_price
+            change = price - previous_price
 
             signal = "NO TRADE"
 
-            if change > 0.3:
+            if change > 0:
 
                 signal = "BUY WATCH"
 
-            elif change < -0.3:
+            elif change < 0:
 
-                signal = "EXIT"
+                signal = "EXIT / AVOID"
 
             risk_amount = account_size * (risk_percent / 100)
 
@@ -84,7 +116,7 @@ if st.button("Run Scan"):
 
             })
 
-        except Exception as e:
+        except Exception:
 
             results.append({
 
@@ -94,7 +126,7 @@ if st.button("Run Scan"):
 
                 "Change": "-",
 
-                "Signal": "ERROR",
+                "Signal": "CALC ERROR",
 
                 "Risk $": "-"
 
@@ -106,8 +138,6 @@ if st.button("Run Scan"):
 
     st.dataframe(df, use_container_width=True)
 
-# Simple journal placeholder
-
 st.subheader("Notes / Journal")
 
-notes = st.text_area("Write your thoughts here after reviewing trades")
+st.text_area("Write your thoughts here after reviewing trades")
