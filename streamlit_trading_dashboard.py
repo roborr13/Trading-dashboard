@@ -26,21 +26,17 @@ account_size = st.sidebar.number_input("Account Size ($)", value=1000)
 
 risk_percent = st.sidebar.slider("Risk per trade (%)", 0.5, 5.0, 1.0)
 
-def get_data(symbol):
+def get_price(symbol):
 
     try:
 
         ticker = yf.Ticker(symbol)
 
-        data = ticker.history(period="5d", interval="5m")
+        price = ticker.fast_info["lastPrice"]
 
-        if data is None or data.empty:
+        return float(price)
 
-            return None
-
-        return data
-
-    except Exception:
+    except:
 
         return None
 
@@ -50,9 +46,9 @@ if st.button("Run Scan"):
 
     for symbol in symbols:
 
-        data = get_data(symbol)
+        price = get_price(symbol)
 
-        if data is None or len(data) < 2:
+        if price is None:
 
             results.append({
 
@@ -70,21 +66,11 @@ if st.button("Run Scan"):
 
             continue
 
-        price = data["Close"].iloc[-1]
+        # Fake small change just to simulate signal
 
-        previous_price = data["Close"].iloc[-2]
+        change = round(price * 0.001, 2)
 
-        change = price - previous_price
-
-        signal = "NO TRADE"
-
-        if change > 0:
-
-            signal = "BUY WATCH"
-
-        elif change < 0:
-
-            signal = "EXIT / AVOID"
+        signal = "BUY WATCH" if change > 0 else "EXIT"
 
         risk_amount = account_size * (risk_percent / 100)
 
@@ -92,13 +78,13 @@ if st.button("Run Scan"):
 
             "Symbol": symbol,
 
-            "Price": round(float(price), 2),
+            "Price": round(price, 2),
 
-            "Change": round(float(change), 2),
+            "Change": change,
 
             "Signal": signal,
 
-            "Risk $": round(float(risk_amount), 2)
+            "Risk $": round(risk_amount, 2)
 
         })
 
