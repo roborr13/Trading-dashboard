@@ -50,21 +50,23 @@ def get_intraday_data(symbol):
 
         return None
 
+# 🔥 UPDATED SIGNAL LOGIC (MORE SENSITIVE)
+
 def get_signal(change_percent):
 
-    if change_percent >= 0.5:
+    if change_percent >= 0.10:
 
         return "🚀 STRONG BUY"
 
-    elif change_percent >= 0.15:
+    elif change_percent >= 0.03:
 
         return "🟢 BUY"
 
-    elif change_percent <= -0.5:
+    elif change_percent <= -0.10:
 
         return "🔻 STRONG SELL"
 
-    elif change_percent <= -0.15:
+    elif change_percent <= -0.03:
 
         return "🔴 SELL"
 
@@ -128,7 +130,7 @@ if st.button("Run Scan"):
 
             "Price": round(float(price), 2),
 
-            "20m Change %": round(float(change_percent), 2),
+            "20m Change %": round(float(change_percent), 3),
 
             "Signal": signal,
 
