@@ -30,21 +30,9 @@ def get_data(symbol):
 
     try:
 
-        data = yf.download(
+        ticker = yf.Ticker(symbol)
 
-            symbol,
-
-            period="5d",
-
-            interval="5m",
-
-            progress=False,
-
-            auto_adjust=True,
-
-            threads=False
-
-        )
+        data = ticker.history(period="5d", interval="5m")
 
         if data is None or data.empty:
 
@@ -82,55 +70,37 @@ if st.button("Run Scan"):
 
             continue
 
-        try:
+        price = data["Close"].iloc[-1]
 
-            price = float(data["Close"].iloc[-1])
+        previous_price = data["Close"].iloc[-2]
 
-            previous_price = float(data["Close"].iloc[-2])
+        change = price - previous_price
 
-            change = price - previous_price
+        signal = "NO TRADE"
 
-            signal = "NO TRADE"
+        if change > 0:
 
-            if change > 0:
+            signal = "BUY WATCH"
 
-                signal = "BUY WATCH"
+        elif change < 0:
 
-            elif change < 0:
+            signal = "EXIT / AVOID"
 
-                signal = "EXIT / AVOID"
+        risk_amount = account_size * (risk_percent / 100)
 
-            risk_amount = account_size * (risk_percent / 100)
+        results.append({
 
-            results.append({
+            "Symbol": symbol,
 
-                "Symbol": symbol,
+            "Price": round(float(price), 2),
 
-                "Price": round(price, 2),
+            "Change": round(float(change), 2),
 
-                "Change": round(change, 2),
+            "Signal": signal,
 
-                "Signal": signal,
+            "Risk $": round(float(risk_amount), 2)
 
-                "Risk $": round(risk_amount, 2)
-
-            })
-
-        except Exception:
-
-            results.append({
-
-                "Symbol": symbol,
-
-                "Price": "-",
-
-                "Change": "-",
-
-                "Signal": "CALC ERROR",
-
-                "Risk $": "-"
-
-            })
+        })
 
     df = pd.DataFrame(results)
 
