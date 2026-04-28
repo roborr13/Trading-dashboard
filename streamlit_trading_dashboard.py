@@ -16,7 +16,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("After-hours monitoring ON (no alerts outside market hours)")
+st.caption("Auto mode ON. Refreshes every 60 seconds.")
 
 # ---------- SETTINGS ----------
 
@@ -368,36 +368,40 @@ def run():
 
         st.info("No setups")
 
-        return
+    else:
 
-    df = pd.DataFrame(setups).sort_values("Score", ascending=False)
+        df = pd.DataFrame(setups).sort_values("Score", ascending=False)
 
-    top = df.iloc[0]
+        top = df.iloc[0]
 
-    st.subheader("🚨 Top Setup")
+        st.subheader("🚨 Top Setup")
 
-    st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
+        st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
 
-    st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
+        st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
 
-    if not open_now:
+        if not open_now:
 
-        st.warning("After hours — SMS blocked")
+            st.warning("After hours — SMS blocked")
 
-    elif "STRONG" not in top["Signal"]:
+        elif "STRONG" not in top["Signal"]:
 
-        st.warning("Not strong enough — no SMS")
+            st.warning("Not strong enough — no SMS")
 
-    elif send_texts and can_alert(top["Symbol"], top["Signal"]):
+        elif send_texts and can_alert(top["Symbol"], top["Signal"]):
 
-        msg = f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']}"
+            msg = f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']}"
 
-        if send_sms(msg):
+            if send_sms(msg):
 
-            st.success("SMS sent")
+                st.success("SMS sent")
 
-    st.subheader("Ranked")
+        st.subheader("Ranked")
 
-    st.dataframe(df)
+        st.dataframe(df)
 
 run()
+
+time.sleep(60)
+
+st.rerun()
