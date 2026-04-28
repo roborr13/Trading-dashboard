@@ -8,9 +8,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Only shows trades aligned with market direction")
-
-# ---------------- SETTINGS ----------------
+st.caption("Ranks only market-aligned trade setups. No real trades are placed.")
 
 st.sidebar.header("Settings")
 
@@ -36,8 +34,6 @@ stop_loss_percent = st.sidebar.slider("Stop loss (%)", 0.5, 5.0, 1.0)
 
 target_percent = st.sidebar.slider("Target (%)", 0.5, 10.0, 2.0)
 
-# ---------------- DATA ----------------
-
 def get_data(symbol):
 
     try:
@@ -50,7 +46,7 @@ def get_data(symbol):
 
         return data
 
-    except:
+    except Exception:
 
         return None
 
@@ -70,9 +66,11 @@ def get_20m_change(symbol):
 
     return float(price), float(change_pct)
 
-# ---------------- MARKET ----------------
-
 def get_market_direction(spy_change):
+
+    if spy_change is None:
+
+        return "UNKNOWN"
 
     if spy_change >= 0.05:
 
@@ -85,8 +83,6 @@ def get_market_direction(spy_change):
     else:
 
         return "CHOPPY"
-
-# ---------------- SIGNAL ----------------
 
 def get_signal(change):
 
@@ -110,7 +106,31 @@ def get_signal(change):
 
         return "⚪ NO TRADE"
 
-# ---------------- SCAN ----------------
+def get_score(change, signal, market):
+
+    strength = abs(change)
+
+    score = 0
+
+    if "STRONG" in signal:
+
+        score += 60
+
+    elif "BUY" in signal or "SELL" in signal:
+
+        score += 40
+
+    score += min(strength * 200, 40)
+
+    if market == "BULLISH" and "BUY" in signal:
+
+        score += 10
+
+    elif market == "BEARISH" and "SELL" in signal:
+
+        score += 10
+
+    return round(min(score, 100), 1)
 
 if st.button("Run Scan"):
 
@@ -122,9 +142,9 @@ if st.button("Run Scan"):
 
     c1, c2, c3 = st.columns(3)
 
-    c1.metric("SPY Price", round(spy_price, 2))
+    c1.metric("SPY Price", "-" if spy_price is None else round(spy_price, 2))
 
-    c2.metric("SPY 20m %", round(spy_change, 3))
+    c2.metric("SPY 20m %", "-" if spy_change is None else round(spy_change, 3))
 
     c3.metric("Market", market)
 
@@ -134,13 +154,11 @@ if st.button("Run Scan"):
 
         price, change = get_20m_change(symbol)
 
-        if price is None:
+        if price is None or change is None:
 
             continue
 
         signal = get_signal(change)
-
-        # 🔥 KEY FILTER (THIS IS THE UPGRADE)
 
         if market == "BULLISH" and "BUY" not in signal:
 
@@ -150,13 +168,25 @@ if st.button("Run Scan"):
 
             continue
 
+        if market == "CHOPPY":
+
+            continue
+
+        if signal == "⚪ NO TRADE":
+
+            continue
+
         risk_amount = account_size * (risk_percent / 100)
 
         stop = price * (1 - stop_loss_percent / 100)
 
         target = price * (1 + target_percent / 100)
 
+        score = get_score(change, signal, market)
+
         results.append({
+
+            "Rank Score": score,
 
             "Symbol": symbol,
 
@@ -176,17 +206,27 @@ if st.button("Run Scan"):
 
     df = pd.DataFrame(results)
 
-    st.subheader("🎯 TRADE SETUPS ONLY")
+    st.subheader("🎯 Ranked Trade Setups")
 
     if df.empty:
 
-        st.warning("No valid trades — market not aligned. Sit out.")
+        st.warning("No valid ranked trades right now. Sit out.")
 
     else:
 
+        df = df.sort_values(by="Rank Score", ascending=False).reset_index(drop=True)
+
+        df.index = df.index + 1
+
         st.dataframe(df, use_container_width=True)
 
-# ---------------- NOTES ----------------
+        best = df.iloc[0]
+
+        st.success(
+
+            f"Top setup: {best['Symbol']} | {best['Signal']} | Score: {best['Rank Score']}"
+
+        )
 
 st.subheader("Notes / Journal")
 
