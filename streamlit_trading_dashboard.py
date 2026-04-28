@@ -8,9 +8,11 @@ import time
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO (ENTRY SYSTEM)")
+st.title("📈 Trading Scanner PRO (A+ SETUPS ONLY)")
 
-st.caption("Paper-trading scanner only. No real trades are placed.")
+st.caption("Paper trading system — filters for high-quality trades only")
+
+# ---------------- SETTINGS ----------------
 
 st.sidebar.header("Settings")
 
@@ -25,8 +27,6 @@ symbols_input = st.sidebar.text_input(
 symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
 mode = st.sidebar.selectbox("Mode", ["AUTO", "TREND", "CHOP"])
-
-alert_threshold = st.sidebar.slider("Alert Score Threshold", 50, 200, 100)
 
 auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)", True)
 
@@ -43,6 +43,8 @@ entry_buffer_percent = st.sidebar.slider("Entry Buffer (%)", 0.05, 1.0, 0.15)
 stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
 
 reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
+
+# ---------------- DATA ----------------
 
 def get_data(symbol):
 
@@ -88,19 +90,9 @@ def analyze(symbol):
 
     recent_low = lows.iloc[-5:].min()
 
-    return {
+    return price, change, pullback, recent_high, recent_low
 
-        "price": float(price),
-
-        "change": float(change),
-
-        "pullback": bool(pullback),
-
-        "recent_high": float(recent_high),
-
-        "recent_low": float(recent_low),
-
-    }
+# ---------------- MARKET ----------------
 
 def get_market(change):
 
@@ -113,6 +105,8 @@ def get_market(change):
         return "BEARISH"
 
     return "CHOPPY"
+
+# ---------------- SIGNAL ----------------
 
 def trend_signal(change, pullback):
 
@@ -134,25 +128,15 @@ def trend_signal(change, pullback):
 
     return None
 
-def chop_signal(change):
+# ---------------- TRADE PLAN ----------------
 
-    if change >= 0.15:
+def build_plan(price, signal, high, low):
 
-        return "🔻 FADE SELL"
-
-    elif change <= -0.15:
-
-        return "🚀 FADE BUY"
-
-    return None
-
-def build_trade_plan(price, signal, recent_high, recent_low):
-
-    max_risk_dollars = account_size * (risk_percent / 100)
+    max_risk = account_size * (risk_percent / 100)
 
     if "BUY" in signal:
 
-        entry = recent_high * (1 + entry_buffer_percent / 100)
+        entry = high * (1 + entry_buffer_percent / 100)
 
         stop = price * (1 - stop_percent / 100)
 
@@ -162,7 +146,7 @@ def build_trade_plan(price, signal, recent_high, recent_low):
 
     elif "SELL" in signal:
 
-        entry = recent_low * (1 - entry_buffer_percent / 100)
+        entry = low * (1 - entry_buffer_percent / 100)
 
         stop = price * (1 + stop_percent / 100)
 
@@ -178,27 +162,47 @@ def build_trade_plan(price, signal, recent_high, recent_low):
 
         return None
 
-    shares = int(max_risk_dollars // risk_per_share)
+    shares = int(max_risk // risk_per_share)
 
-    return {
+    return entry, stop, target, shares, risk_per_share
 
-        "Entry": round(entry, 2),
+# ---------------- GRADING SYSTEM ----------------
 
-        "Stop": round(stop, 2),
+def grade_trade(change, pullback, market, signal):
 
-        "Target": round(target, 2),
+    score = abs(change) * 100
 
-        "Risk/Share": round(risk_per_share, 2),
+    if pullback:
 
-        "Shares": shares,
+        score += 10
 
-        "Max Risk $": round(shares * risk_per_share, 2),
+    if market == "BULLISH" and "BUY" in signal:
 
-    }
+        score += 10
 
-if "last_top" not in st.session_state:
+    if market == "BEARISH" and "SELL" in signal:
 
-    st.session_state.last_top = None
+        score += 10
+
+    if score >= 30:
+
+        grade = "A+"
+
+    elif score >= 20:
+
+        grade = "A"
+
+    elif score >= 10:
+
+        grade = "B"
+
+    else:
+
+        grade = "C"
+
+    return score, grade
+
+# ---------------- APP ----------------
 
 placeholder = st.empty()
 
@@ -208,11 +212,13 @@ while True:
 
     if spy is None:
 
-        st.error("Could not load SPY data.")
+        st.error("SPY data failed")
 
         break
 
-    market = get_market(spy["change"])
+    spy_price, spy_change, _, _, _ = spy
+
+    market = get_market(spy_change)
 
     results = []
 
@@ -224,15 +230,7 @@ while True:
 
             continue
 
-        price = data["price"]
-
-        change = data["change"]
-
-        pullback = data["pullback"]
-
-        recent_high = data["recent_high"]
-
-        recent_low = data["recent_low"]
+        price, change, pullback, high, low = data
 
         active_mode = mode
 
@@ -240,51 +238,57 @@ while True:
 
             active_mode = "TREND" if market != "CHOPPY" else "CHOP"
 
-        signal = None
-
-        if active_mode == "TREND":
-
-            signal = trend_signal(change, pullback)
-
-            if market == "BULLISH" and signal and "BUY" not in signal:
-
-                signal = None
-
-            if market == "BEARISH" and signal and "SELL" not in signal:
-
-                signal = None
-
-        elif active_mode == "CHOP":
-
-            signal = chop_signal(change)
+        signal = trend_signal(change, pullback)
 
         if not signal:
 
             continue
 
-        plan = build_trade_plan(price, signal, recent_high, recent_low)
-
-        if plan is None:
+        if market == "BULLISH" and "BUY" not in signal:
 
             continue
 
-        score = round(abs(change) * 300 + (5 if pullback else 0), 1)
+        if market == "BEARISH" and "SELL" not in signal:
+
+            continue
+
+        plan = build_plan(price, signal, high, low)
+
+        if not plan:
+
+            continue
+
+        entry, stop, target, shares, risk_ps = plan
+
+        score, grade = grade_trade(change, pullback, market, signal)
+
+        # 🔥 ONLY SHOW GOOD TRADES
+
+        if grade not in ["A+", "A"]:
+
+            continue
 
         results.append({
 
-            "Score": score,
+            "Grade": grade,
+
+            "Score": round(score,1),
 
             "Symbol": symbol,
 
-            "Price": round(price, 2),
+            "Price": round(price,2),
 
-            "20m %": round(change, 3),
+            "20m %": round(change,3),
 
             "Signal": signal,
 
-            "Pullback": "✔" if pullback else "",
+            "Entry": round(entry,2),
 
-            **plan
+            "Stop": round(stop,2),
+
+            "Target": round(target,2),
+
+            "Shares": shares
 
         })
 
@@ -296,51 +300,35 @@ while True:
 
         c1, c2, c3 = st.columns(3)
 
-        c1.metric("SPY", round(spy["price"], 2))
+        c1.metric("SPY", round(spy_price,2))
 
-        c2.metric("20m %", round(spy["change"], 3))
+        c2.metric("20m %", round(spy_change,3))
 
         c3.metric("Market", market)
 
-        st.subheader("🎯 Entry Setups")
+        st.subheader("🎯 A+ Trade Setups")
 
         if df.empty:
 
-            st.warning("No clean entry setups right now. Wait.")
+            st.warning("No A+ setups — wait.")
 
         else:
 
             df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
 
-            df.index = df.index + 1
+            df.index += 1
 
             st.dataframe(df, use_container_width=True)
 
             top = df.iloc[0]
 
-            if top["Score"] >= alert_threshold:
+            st.success(
 
-                if st.session_state.last_top != top["Symbol"]:
+                f"🔥 TOP TRADE: {top['Symbol']} | {top['Signal']} | "
 
-                    st.session_state.last_top = top["Symbol"]
+                f"Entry {top['Entry']} → Target {top['Target']}"
 
-                    st.success(
-
-                        f"🚨 TOP ENTRY: {top['Symbol']} | {top['Signal']} | "
-
-                        f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']} | "
-
-                        f"Shares {top['Shares']}"
-
-                    )
-
-                else:
-
-                    st.info(f"Top setup still: {top['Symbol']} | {top['Signal']}")
-
-            else:
-
-                st.info("No high-quality entry alerts.")
+            )
 
     if not auto_refresh:
 
