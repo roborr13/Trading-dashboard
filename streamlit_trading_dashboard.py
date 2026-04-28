@@ -6,13 +6,17 @@ import pandas as pd
 
 import time
 
+from datetime import datetime, time as dtime
+
+from zoneinfo import ZoneInfo
+
 from twilio.rest import Client
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Only high-quality alerts. No spam.")
+st.caption("Only scans during market hours. High-quality alerts only.")
 
 # ---------- SETTINGS ----------
 
@@ -57,6 +61,22 @@ cooldown_minutes = st.sidebar.slider("Alert Cooldown Minutes", 5, 60, 15)
 if "last_alerts" not in st.session_state:
 
     st.session_state.last_alerts = {}
+
+# ---------- MARKET HOURS ----------
+
+def market_is_open():
+
+    now = datetime.now(ZoneInfo("America/New_York"))
+
+    market_open = dtime(9, 30)
+
+    market_close = dtime(16, 0)
+
+    is_weekday = now.weekday() < 5
+
+    is_open_time = market_open <= now.time() <= market_close
+
+    return is_weekday and is_open_time, now
 
 # ---------- SMS ----------
 
@@ -298,6 +318,18 @@ def can_alert(symbol, signal):
 
 def run():
 
+    open_now, now_et = market_is_open()
+
+    st.subheader("Market Hours")
+
+    st.metric("Current ET Time", now_et.strftime("%I:%M %p"))
+
+    if not open_now:
+
+        st.warning("Market closed — no scans and no alerts.")
+
+        return
+
     spy = analyze("SPY")
 
     if spy is None:
@@ -349,8 +381,6 @@ def run():
     st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
 
     st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
-
-    # ---------- FINAL FILTERS ----------
 
     if market == "CHOPPY":
 
