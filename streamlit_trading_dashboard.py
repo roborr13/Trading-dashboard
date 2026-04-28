@@ -8,7 +8,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Ranks only market-aligned trade setups. No real trades are placed.")
+# ---------------- SETTINGS ----------------
 
 st.sidebar.header("Settings")
 
@@ -22,17 +22,19 @@ symbols_input = st.sidebar.text_input(
 
 symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
-st.sidebar.subheader("Risk Settings")
+mode = st.sidebar.selectbox(
+
+    "Trading Mode",
+
+    ["AUTO", "TREND", "CHOP"]
+
+)
 
 account_size = st.sidebar.number_input("Account Size ($)", value=1000)
 
-risk_percent = st.sidebar.slider("Risk per trade (%)", 0.5, 5.0, 1.0)
+risk_percent = st.sidebar.slider("Risk %", 0.5, 5.0, 1.0)
 
-st.sidebar.subheader("Trade Settings")
-
-stop_loss_percent = st.sidebar.slider("Stop loss (%)", 0.5, 5.0, 1.0)
-
-target_percent = st.sidebar.slider("Target (%)", 0.5, 10.0, 2.0)
+# ---------------- DATA ----------------
 
 def get_data(symbol):
 
@@ -46,11 +48,11 @@ def get_data(symbol):
 
         return data
 
-    except Exception:
+    except:
 
         return None
 
-def get_20m_change(symbol):
+def get_change(symbol):
 
     data = get_data(symbol)
 
@@ -66,11 +68,9 @@ def get_20m_change(symbol):
 
     return float(price), float(change_pct)
 
-def get_market_direction(spy_change):
+# ---------------- MARKET ----------------
 
-    if spy_change is None:
-
-        return "UNKNOWN"
+def get_market(spy_change):
 
     if spy_change >= 0.05:
 
@@ -84,7 +84,9 @@ def get_market_direction(spy_change):
 
         return "CHOPPY"
 
-def get_signal(change):
+# ---------------- SIGNALS ----------------
+
+def trend_signal(change):
 
     if change >= 0.10:
 
@@ -102,49 +104,35 @@ def get_signal(change):
 
         return "🔴 SELL"
 
-    else:
+    return None
 
-        return "⚪ NO TRADE"
+def chop_signal(change):
 
-def get_score(change, signal, market):
+    if change >= 0.10:
 
-    strength = abs(change)
+        return "🔻 FADE SELL"
 
-    score = 0
+    elif change <= -0.10:
 
-    if "STRONG" in signal:
+        return "🚀 FADE BUY"
 
-        score += 60
+    return None
 
-    elif "BUY" in signal or "SELL" in signal:
-
-        score += 40
-
-    score += min(strength * 200, 40)
-
-    if market == "BULLISH" and "BUY" in signal:
-
-        score += 10
-
-    elif market == "BEARISH" and "SELL" in signal:
-
-        score += 10
-
-    return round(min(score, 100), 1)
+# ---------------- SCAN ----------------
 
 if st.button("Run Scan"):
 
-    spy_price, spy_change = get_20m_change("SPY")
+    spy_price, spy_change = get_change("SPY")
 
-    market = get_market_direction(spy_change)
+    market = get_market(spy_change)
 
-    st.subheader("Market Direction")
+    st.subheader("Market")
 
     c1, c2, c3 = st.columns(3)
 
-    c1.metric("SPY Price", "-" if spy_price is None else round(spy_price, 2))
+    c1.metric("SPY", round(spy_price, 2))
 
-    c2.metric("SPY 20m %", "-" if spy_change is None else round(spy_change, 3))
+    c2.metric("20m %", round(spy_change, 3))
 
     c3.metric("Market", market)
 
@@ -152,41 +140,49 @@ if st.button("Run Scan"):
 
     for symbol in symbols:
 
-        price, change = get_20m_change(symbol)
+        price, change = get_change(symbol)
 
-        if price is None or change is None:
-
-            continue
-
-        signal = get_signal(change)
-
-        if market == "BULLISH" and "BUY" not in signal:
+        if price is None:
 
             continue
 
-        if market == "BEARISH" and "SELL" not in signal:
+        signal = None
+
+        # 🔥 MODE LOGIC
+
+        active_mode = mode
+
+        if mode == "AUTO":
+
+            active_mode = "TREND" if market != "CHOPPY" else "CHOP"
+
+        if active_mode == "TREND":
+
+            signal = trend_signal(change)
+
+            if market == "BULLISH" and signal and "BUY" not in signal:
+
+                signal = None
+
+            if market == "BEARISH" and signal and "SELL" not in signal:
+
+                signal = None
+
+        elif active_mode == "CHOP":
+
+            signal = chop_signal(change)
+
+        if not signal:
 
             continue
 
-        if market == "CHOPPY":
-
-            continue
-
-        if signal == "⚪ NO TRADE":
-
-            continue
+        score = round(abs(change) * 300, 1)
 
         risk_amount = account_size * (risk_percent / 100)
 
-        stop = price * (1 - stop_loss_percent / 100)
-
-        target = price * (1 + target_percent / 100)
-
-        score = get_score(change, signal, market)
-
         results.append({
 
-            "Rank Score": score,
+            "Score": score,
 
             "Symbol": symbol,
 
@@ -196,38 +192,32 @@ if st.button("Run Scan"):
 
             "Signal": signal,
 
-            "Stop": round(stop, 2),
-
-            "Target": round(target, 2),
-
             "Risk $": round(risk_amount, 2)
 
         })
 
     df = pd.DataFrame(results)
 
-    st.subheader("🎯 Ranked Trade Setups")
+    st.subheader("🎯 Trade Opportunities")
 
     if df.empty:
 
-        st.warning("No valid ranked trades right now. Sit out.")
+        st.warning("No setups — this is normal. Stay patient.")
 
     else:
 
-        df = df.sort_values(by="Rank Score", ascending=False).reset_index(drop=True)
+        df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
 
         df.index = df.index + 1
 
         st.dataframe(df, use_container_width=True)
 
-        best = df.iloc[0]
+        top = df.iloc[0]
 
-        st.success(
+        st.success(f"Top Trade: {top['Symbol']} | {top['Signal']}")
 
-            f"Top setup: {best['Symbol']} | {best['Signal']} | Score: {best['Rank Score']}"
+# ---------------- NOTES ----------------
 
-        )
+st.subheader("Notes")
 
-st.subheader("Notes / Journal")
-
-st.text_area("Write your thoughts here")
+st.text_area("Write your thoughts")
