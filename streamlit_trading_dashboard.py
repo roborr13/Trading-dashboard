@@ -4,9 +4,11 @@ import yfinance as yf
 
 import pandas as pd
 
+import time
+
 st.set_page_config(page_title="Trading Dashboard", layout="wide")
 
-st.title("📈 Trading Dashboard")
+st.title("📈 Trading Dashboard (LIVE)")
 
 st.sidebar.header("Settings")
 
@@ -32,6 +34,8 @@ stop_loss_percent = st.sidebar.slider("Stop loss (%)", 0.5, 5.0, 1.0)
 
 target_percent = st.sidebar.slider("Target (%)", 0.5, 10.0, 2.0)
 
+auto_refresh = st.sidebar.checkbox("Auto Refresh (every 60s)", value=True)
+
 def get_intraday_data(symbol):
 
     try:
@@ -49,8 +53,6 @@ def get_intraday_data(symbol):
     except Exception:
 
         return None
-
-# 🔥 UPDATED SIGNAL LOGIC (MORE SENSITIVE)
 
 def get_signal(change_percent):
 
@@ -74,7 +76,7 @@ def get_signal(change_percent):
 
         return "⚪ NO TRADE"
 
-if st.button("Run Scan"):
+def run_scan():
 
     results = []
 
@@ -142,12 +144,28 @@ if st.button("Run Scan"):
 
         })
 
-    df = pd.DataFrame(results)
+    return pd.DataFrame(results)
 
-    st.subheader("Scan Results (20-Min Momentum)")
+placeholder = st.empty()
 
-    st.dataframe(df, use_container_width=True)
+while True:
 
-st.subheader("Notes / Journal")
+    df = run_scan()
 
-st.text_area("Write your thoughts here after reviewing trades")
+    with placeholder.container():
+
+        st.subheader("Scan Results (20-Min Momentum)")
+
+        st.dataframe(df, use_container_width=True)
+
+        st.subheader("Notes / Journal")
+
+        st.text_area("Write your thoughts here after reviewing trades")
+
+    if not auto_refresh:
+
+        break
+
+    time.sleep(60)
+
+    st.rerun()
