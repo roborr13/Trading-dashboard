@@ -26,19 +26,69 @@ account_size = st.sidebar.number_input("Account Size ($)", value=1000)
 
 risk_percent = st.sidebar.slider("Risk per trade (%)", 0.5, 5.0, 1.0)
 
-def get_price(symbol):
+st.sidebar.subheader("Trade Settings")
+
+stop_loss_percent = st.sidebar.slider("Stop loss (%)", 0.5, 5.0, 1.0)
+
+target_percent = st.sidebar.slider("Target (%)", 0.5, 10.0, 2.0)
+
+def get_market_data(symbol):
 
     try:
 
         ticker = yf.Ticker(symbol)
 
-        price = ticker.fast_info["lastPrice"]
+        info = ticker.fast_info
 
-        return float(price)
+        price = float(info["lastPrice"])
 
-    except:
+        previous_close = float(info["previousClose"])
+
+        if price <= 0 or previous_close <= 0:
+
+            return None
+
+        dollar_change = price - previous_close
+
+        percent_change = (dollar_change / previous_close) * 100
+
+        return {
+
+            "price": price,
+
+            "previous_close": previous_close,
+
+            "dollar_change": dollar_change,
+
+            "percent_change": percent_change
+
+        }
+
+    except Exception:
 
         return None
+
+def get_signal(percent_change):
+
+    if percent_change >= 1.0:
+
+        return "STRONG BUY WATCH"
+
+    elif percent_change >= 0.25:
+
+        return "BUY WATCH"
+
+    elif percent_change <= -1.0:
+
+        return "STRONG EXIT / AVOID"
+
+    elif percent_change <= -0.25:
+
+        return "EXIT / AVOID"
+
+    else:
+
+        return "NO TRADE"
 
 if st.button("Run Scan"):
 
@@ -46,9 +96,9 @@ if st.button("Run Scan"):
 
     for symbol in symbols:
 
-        price = get_price(symbol)
+        data = get_market_data(symbol)
 
-        if price is None:
+        if data is None:
 
             results.append({
 
@@ -56,9 +106,17 @@ if st.button("Run Scan"):
 
                 "Price": "-",
 
-                "Change": "-",
+                "Prev Close": "-",
+
+                "$ Change": "-",
+
+                "% Change": "-",
 
                 "Signal": "DATA ERROR",
+
+                "Stop Loss": "-",
+
+                "Target": "-",
 
                 "Risk $": "-"
 
@@ -66,13 +124,21 @@ if st.button("Run Scan"):
 
             continue
 
-        # Fake small change just to simulate signal
+        price = data["price"]
 
-        change = round(price * 0.001, 2)
+        previous_close = data["previous_close"]
 
-        signal = "BUY WATCH" if change > 0 else "EXIT"
+        dollar_change = data["dollar_change"]
+
+        percent_change = data["percent_change"]
+
+        signal = get_signal(percent_change)
 
         risk_amount = account_size * (risk_percent / 100)
+
+        stop_loss = price * (1 - stop_loss_percent / 100)
+
+        target = price * (1 + target_percent / 100)
 
         results.append({
 
@@ -80,9 +146,17 @@ if st.button("Run Scan"):
 
             "Price": round(price, 2),
 
-            "Change": change,
+            "Prev Close": round(previous_close, 2),
+
+            "$ Change": round(dollar_change, 2),
+
+            "% Change": round(percent_change, 2),
 
             "Signal": signal,
+
+            "Stop Loss": round(stop_loss, 2),
+
+            "Target": round(target, 2),
 
             "Risk $": round(risk_amount, 2)
 
