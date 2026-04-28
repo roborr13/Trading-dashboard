@@ -12,7 +12,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Paper trading only. Sends SMS alerts only in bullish/bearish markets.")
+st.caption("Only high-quality alerts. No spam.")
 
 # ---------- SETTINGS ----------
 
@@ -48,11 +48,11 @@ reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
 st.sidebar.subheader("Alert Settings")
 
-minimum_score = st.sidebar.slider("Minimum Alert Score", 20, 100, 40)
+minimum_score = 40
 
 cooldown_minutes = st.sidebar.slider("Alert Cooldown Minutes", 5, 60, 15)
 
-# ---------- SESSION STATE ----------
+# ---------- STATE ----------
 
 if "last_alerts" not in st.session_state:
 
@@ -86,7 +86,7 @@ def send_sms(message):
 
     except Exception as e:
 
-        st.warning(f"SMS failed: {e}")
+        st.error(f"SMS error: {e}")
 
         return False
 
@@ -104,7 +104,7 @@ def get_data(symbol):
 
         return data
 
-    except Exception:
+    except:
 
         return None
 
@@ -132,21 +132,17 @@ def analyze(symbol):
 
     pullback = price < prev
 
-    recent_high = highs.iloc[-5:].max()
-
-    recent_low = lows.iloc[-5:].min()
-
     return {
 
-        "price": float(price),
+        "price": price,
 
-        "change": float(change),
+        "change": change,
 
-        "pullback": bool(pullback),
+        "pullback": pullback,
 
-        "recent_high": float(recent_high),
+        "recent_high": highs.iloc[-5:].max(),
 
-        "recent_low": float(recent_low),
+        "recent_low": lows.iloc[-5:].min(),
 
     }
 
@@ -200,45 +196,45 @@ def get_signal(change, pullback, market):
 
     return "⚪ NO TRADE"
 
-# ---------- TRADE PLAN ----------
+# ---------- TRADE ----------
 
-def build_trade_plan(symbol, price, signal, recent_high, recent_low, change, pullback, market):
+def build_trade(symbol, data, signal, market):
 
-    max_risk = account_size * (risk_percent / 100)
+    price = data["price"]
 
     if "BUY" in signal:
 
-        entry = recent_high * (1 + entry_buffer_percent / 100)
+        entry = data["recent_high"] * (1 + entry_buffer_percent / 100)
 
         stop = price * (1 - stop_percent / 100)
 
-        risk_per_share = entry - stop
+        risk = entry - stop
 
-        target = entry + (risk_per_share * reward_ratio)
+        target = entry + (risk * reward_ratio)
 
     elif "SELL" in signal:
 
-        entry = recent_low * (1 - entry_buffer_percent / 100)
+        entry = data["recent_low"] * (1 - entry_buffer_percent / 100)
 
         stop = price * (1 + stop_percent / 100)
 
-        risk_per_share = stop - entry
+        risk = stop - entry
 
-        target = entry - (risk_per_share * reward_ratio)
+        target = entry - (risk * reward_ratio)
 
     else:
 
         return None
 
-    if risk_per_share <= 0:
+    if risk <= 0:
 
         return None
 
-    shares = int(max_risk // risk_per_share)
+    shares = int((account_size * (risk_percent / 100)) // risk)
 
-    score = abs(change) * 100
+    score = abs(data["change"]) * 100
 
-    if pullback:
+    if data["pullback"]:
 
         score += 10
 
@@ -254,35 +250,21 @@ def build_trade_plan(symbol, price, signal, recent_high, recent_low, change, pul
 
         score += 10
 
-    if score >= 40:
+    if score < minimum_score:
 
-        grade = "A+"
+        return None
 
-    elif score >= 30:
-
-        grade = "A"
-
-    elif score >= 20:
-
-        grade = "B"
-
-    else:
-
-        grade = "C"
+    grade = "A+" if score >= 40 else "A"
 
     return {
 
-        "Grade": grade,
+        "Symbol": symbol,
+
+        "Signal": signal,
 
         "Score": round(score, 1),
 
-        "Symbol": symbol,
-
-        "Price": round(price, 2),
-
-        "20m %": round(change, 3),
-
-        "Signal": signal,
+        "Grade": grade,
 
         "Entry": round(entry, 2),
 
@@ -290,9 +272,7 @@ def build_trade_plan(symbol, price, signal, recent_high, recent_low, change, pul
 
         "Target": round(target, 2),
 
-        "Shares": shares,
-
-        "Max Risk $": round(shares * risk_per_share, 2)
+        "Shares": shares
 
     }
 
@@ -300,21 +280,13 @@ def build_trade_plan(symbol, price, signal, recent_high, recent_low, change, pul
 
 def can_alert(symbol, signal):
 
-    now = time.time()
-
     key = f"{symbol}-{signal}"
 
-    last_time = st.session_state.last_alerts.get(key)
+    now = time.time()
 
-    if last_time is None:
+    last = st.session_state.last_alerts.get(key)
 
-        st.session_state.last_alerts[key] = now
-
-        return True
-
-    cooldown_seconds = cooldown_minutes * 60
-
-    if now - last_time >= cooldown_seconds:
+    if last is None or (now - last > cooldown_minutes * 60):
 
         st.session_state.last_alerts[key] = now
 
@@ -324,155 +296,85 @@ def can_alert(symbol, signal):
 
 # ---------- SCAN ----------
 
-def run_scan():
+def run():
 
     spy = analyze("SPY")
 
     if spy is None:
 
-        return None, None, pd.DataFrame()
-
-    market = get_market(spy["change"])
-
-    results = []
-
-    for symbol in symbols:
-
-        data = analyze(symbol)
-
-        if data is None:
-
-            continue
-
-        signal = get_signal(
-
-            data["change"],
-
-            data["pullback"],
-
-            market
-
-        )
-
-        if signal == "⚪ NO TRADE":
-
-            continue
-
-        plan = build_trade_plan(
-
-            symbol,
-
-            data["price"],
-
-            signal,
-
-            data["recent_high"],
-
-            data["recent_low"],
-
-            data["change"],
-
-            data["pullback"],
-
-            market
-
-        )
-
-        if plan is None:
-
-            continue
-
-        if plan["Score"] < minimum_score:
-
-            continue
-
-        results.append(plan)
-
-    df = pd.DataFrame(results)
-
-    if not df.empty:
-
-        df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
-
-        df.index = df.index + 1
-
-    return spy, market, df
-
-# ---------- DISPLAY ----------
-
-def display_app():
-
-    spy, market, df = run_scan()
-
-    if spy is None:
-
-        st.error("Could not load SPY data.")
+        st.error("SPY failed")
 
         return
 
-    st.subheader("Market Direction")
+    market = get_market(spy["change"])
 
-    c1, c2, c3 = st.columns(3)
+    st.subheader("Market")
 
-    c1.metric("SPY Price", round(spy["price"], 2))
+    st.metric("SPY", round(spy["price"], 2))
 
-    c2.metric("SPY 20m %", round(spy["change"], 3))
+    st.metric("20m %", round(spy["change"], 3))
 
-    c3.metric("Market", market)
+    st.metric("Market", market)
 
-    st.subheader("🚨 Trade Alerts")
+    setups = []
 
-    if df.empty:
+    for s in symbols:
 
-        st.info("No qualified setups right now. Sit out.")
+        d = analyze(s)
 
-    else:
+        if d is None:
 
-        top = df.iloc[0]
+            continue
 
-        alert_message = (
+        signal = get_signal(d["change"], d["pullback"], market)
 
-            f"TRADE ALERT: {top['Symbol']} {top['Signal']} | "
+        trade = build_trade(s, d, signal, market)
 
-            f"Grade {top['Grade']} | Score {top['Score']} | "
+        if trade:
 
-            f"Entry {top['Entry']} | Stop {top['Stop']} | "
+            setups.append(trade)
 
-            f"Target {top['Target']} | Shares {top['Shares']}"
+    if not setups:
 
-        )
+        st.info("No setups")
 
-        st.error(f"Top Setup: {top['Symbol']} | {top['Grade']} | {top['Signal']}")
+        return
 
-        st.success(
+    df = pd.DataFrame(setups).sort_values("Score", ascending=False)
 
-            f"Entry: {top['Entry']} | Stop: {top['Stop']} | "
+    top = df.iloc[0]
 
-            f"Target: {top['Target']} | Shares: {top['Shares']}"
+    st.subheader("🚨 Top Setup")
 
-        )
+    st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
 
-        if market == "CHOPPY":
+    st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
 
-            st.warning("CHOPPY market — SMS blocked.")
+    # ---------- FINAL FILTERS ----------
 
-        elif send_texts and can_alert(top["Symbol"], top["Signal"]):
+    if market == "CHOPPY":
 
-            if send_sms(alert_message):
+        st.warning("CHOPPY — no trades")
 
-                st.success("SMS alert sent.")
+    elif "STRONG" not in top["Signal"]:
 
-        st.subheader("🎯 Ranked Setups")
+        st.warning("Not strong enough — no SMS")
 
-        st.dataframe(df, use_container_width=True)
+    elif send_texts and can_alert(top["Symbol"], top["Signal"]):
 
-    st.subheader("Notes / Journal")
+        msg = f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']}"
 
-    st.text_area("Journal")
+        if send_sms(msg):
+
+            st.success("SMS sent")
+
+    st.subheader("Ranked")
+
+    st.dataframe(df)
 
 # ---------- RUN ----------
 
-display_app()
+run()
 
 if auto_refresh:
 
