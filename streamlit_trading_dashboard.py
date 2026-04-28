@@ -32,63 +32,47 @@ stop_loss_percent = st.sidebar.slider("Stop loss (%)", 0.5, 5.0, 1.0)
 
 target_percent = st.sidebar.slider("Target (%)", 0.5, 10.0, 2.0)
 
-def get_market_data(symbol):
+def get_intraday_data(symbol):
 
     try:
 
         ticker = yf.Ticker(symbol)
 
-        info = ticker.fast_info
+        # Get 5-minute candles (last day)
 
-        price = float(info["lastPrice"])
+        data = ticker.history(period="1d", interval="5m")
 
-        previous_close = float(info["previousClose"])
-
-        if price <= 0 or previous_close <= 0:
+        if data is None or len(data) < 3:
 
             return None
 
-        dollar_change = price - previous_close
+        return data
 
-        percent_change = (dollar_change / previous_close) * 100
-
-        return {
-
-            "price": price,
-
-            "previous_close": previous_close,
-
-            "dollar_change": dollar_change,
-
-            "percent_change": percent_change
-
-        }
-
-    except Exception:
+    except:
 
         return None
 
-def get_signal(percent_change):
+def get_signal(change_percent):
 
-    if percent_change >= 1.0:
+    if change_percent >= 0.5:
 
-        return "STRONG BUY WATCH"
+        return "🚀 STRONG BUY"
 
-    elif percent_change >= 0.25:
+    elif change_percent >= 0.15:
 
-        return "BUY WATCH"
+        return "🟢 BUY"
 
-    elif percent_change <= -1.0:
+    elif change_percent <= -0.5:
 
-        return "STRONG EXIT / AVOID"
+        return "🔻 STRONG SELL"
 
-    elif percent_change <= -0.25:
+    elif change_percent <= -0.15:
 
-        return "EXIT / AVOID"
+        return "🔴 SELL"
 
     else:
 
-        return "NO TRADE"
+        return "⚪ NO TRADE"
 
 if st.button("Run Scan"):
 
@@ -96,7 +80,7 @@ if st.button("Run Scan"):
 
     for symbol in symbols:
 
-        data = get_market_data(symbol)
+        data = get_intraday_data(symbol)
 
         if data is None:
 
@@ -106,11 +90,7 @@ if st.button("Run Scan"):
 
                 "Price": "-",
 
-                "Prev Close": "-",
-
-                "$ Change": "-",
-
-                "% Change": "-",
+                "5m Change %": "-",
 
                 "Signal": "DATA ERROR",
 
@@ -124,15 +104,19 @@ if st.button("Run Scan"):
 
             continue
 
-        price = data["price"]
+        # Current price (latest candle close)
 
-        previous_close = data["previous_close"]
+        price = data["Close"].iloc[-1]
 
-        dollar_change = data["dollar_change"]
+        # Previous 5-min candle close
 
-        percent_change = data["percent_change"]
+        prev_price = data["Close"].iloc[-2]
 
-        signal = get_signal(percent_change)
+        change = price - prev_price
+
+        change_percent = (change / prev_price) * 100
+
+        signal = get_signal(change_percent)
 
         risk_amount = account_size * (risk_percent / 100)
 
@@ -144,27 +128,23 @@ if st.button("Run Scan"):
 
             "Symbol": symbol,
 
-            "Price": round(price, 2),
+            "Price": round(float(price), 2),
 
-            "Prev Close": round(previous_close, 2),
-
-            "$ Change": round(dollar_change, 2),
-
-            "% Change": round(percent_change, 2),
+            "5m Change %": round(float(change_percent), 2),
 
             "Signal": signal,
 
-            "Stop Loss": round(stop_loss, 2),
+            "Stop Loss": round(float(stop_loss), 2),
 
-            "Target": round(target, 2),
+            "Target": round(float(target), 2),
 
-            "Risk $": round(risk_amount, 2)
+            "Risk $": round(float(risk_amount), 2)
 
         })
 
     df = pd.DataFrame(results)
 
-    st.subheader("Scan Results")
+    st.subheader("Scan Results (5-Min Momentum)")
 
     st.dataframe(df, use_container_width=True)
 
