@@ -8,9 +8,9 @@ import time
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO (A+ SETUPS ONLY)")
+st.title("📈 Trading Scanner PRO (ALERTS)")
 
-st.caption("Paper trading system — filters for high-quality trades only")
+st.caption("Paper trading system — no real trades are placed")
 
 # ---------------- SETTINGS ----------------
 
@@ -30,6 +30,10 @@ mode = st.sidebar.selectbox("Mode", ["AUTO", "TREND", "CHOP"])
 
 auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)", True)
 
+alert_grade = st.sidebar.selectbox("Alert Minimum Grade", ["A+", "A"])
+
+sound_alerts = st.sidebar.checkbox("Sound Alert", True)
+
 st.sidebar.subheader("Risk")
 
 account_size = st.sidebar.number_input("Account Size ($)", value=1000)
@@ -43,6 +47,12 @@ entry_buffer_percent = st.sidebar.slider("Entry Buffer (%)", 0.05, 1.0, 0.15)
 stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
 
 reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
+
+# ---------------- SESSION ----------------
+
+if "last_alert" not in st.session_state:
+
+    st.session_state.last_alert = None
 
 # ---------------- DATA ----------------
 
@@ -166,7 +176,7 @@ def build_plan(price, signal, high, low):
 
     return entry, stop, target, shares, risk_per_share
 
-# ---------------- GRADING SYSTEM ----------------
+# ---------------- GRADING ----------------
 
 def grade_trade(change, pullback, market, signal):
 
@@ -201,6 +211,32 @@ def grade_trade(change, pullback, market, signal):
         grade = "C"
 
     return score, grade
+
+def alert_allowed(grade):
+
+    if alert_grade == "A+":
+
+        return grade == "A+"
+
+    return grade in ["A+", "A"]
+
+def play_sound():
+
+    st.markdown(
+
+        """
+
+        <audio autoplay>
+
+            <source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg">
+
+        </audio>
+
+        """,
+
+        unsafe_allow_html=True
+
+    )
 
 # ---------------- APP ----------------
 
@@ -262,8 +298,6 @@ while True:
 
         score, grade = grade_trade(change, pullback, market, signal)
 
-        # 🔥 ONLY SHOW GOOD TRADES
-
         if grade not in ["A+", "A"]:
 
             continue
@@ -272,21 +306,21 @@ while True:
 
             "Grade": grade,
 
-            "Score": round(score,1),
+            "Score": round(score, 1),
 
             "Symbol": symbol,
 
-            "Price": round(price,2),
+            "Price": round(price, 2),
 
-            "20m %": round(change,3),
+            "20m %": round(change, 3),
 
             "Signal": signal,
 
-            "Entry": round(entry,2),
+            "Entry": round(entry, 2),
 
-            "Stop": round(stop,2),
+            "Stop": round(stop, 2),
 
-            "Target": round(target,2),
+            "Target": round(target, 2),
 
             "Shares": shares
 
@@ -300,17 +334,17 @@ while True:
 
         c1, c2, c3 = st.columns(3)
 
-        c1.metric("SPY", round(spy_price,2))
+        c1.metric("SPY", round(spy_price, 2))
 
-        c2.metric("20m %", round(spy_change,3))
+        c2.metric("20m %", round(spy_change, 3))
 
         c3.metric("Market", market)
 
-        st.subheader("🎯 A+ Trade Setups")
+        st.subheader("🚨 Alerts")
 
         if df.empty:
 
-            st.warning("No A+ setups — wait.")
+            st.warning("No alert setups right now.")
 
         else:
 
@@ -318,17 +352,45 @@ while True:
 
             df.index += 1
 
-            st.dataframe(df, use_container_width=True)
-
             top = df.iloc[0]
 
-            st.success(
+            alert_key = f"{top['Symbol']}-{top['Signal']}-{top['Entry']}"
 
-                f"🔥 TOP TRADE: {top['Symbol']} | {top['Signal']} | "
+            if alert_allowed(top["Grade"]):
 
-                f"Entry {top['Entry']} → Target {top['Target']}"
+                if st.session_state.last_alert != alert_key:
 
-            )
+                    st.session_state.last_alert = alert_key
+
+                    st.error(
+
+                        f"🚨 NEW ALERT: {top['Symbol']} | {top['Grade']} | {top['Signal']}"
+
+                    )
+
+                    st.success(
+
+                        f"Entry: {top['Entry']} | Stop: {top['Stop']} | "
+
+                        f"Target: {top['Target']} | Shares: {top['Shares']}"
+
+                    )
+
+                    if sound_alerts:
+
+                        play_sound()
+
+                else:
+
+                    st.info(
+
+                        f"Active alert: {top['Symbol']} | {top['Signal']} | Entry {top['Entry']}"
+
+                    )
+
+            st.subheader("🎯 A/A+ Setups")
+
+            st.dataframe(df, use_container_width=True)
 
     if not auto_refresh:
 
