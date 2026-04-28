@@ -8,9 +8,9 @@ import time
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO (LIVE ALERTS)")
+st.title("📈 Trading Scanner PRO (ENTRY SYSTEM)")
 
-# ---------------- SETTINGS ----------------
+st.caption("Paper-trading scanner only. No real trades are placed.")
 
 st.sidebar.header("Settings")
 
@@ -30,11 +30,19 @@ alert_threshold = st.sidebar.slider("Alert Score Threshold", 50, 200, 100)
 
 auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)", True)
 
-account_size = st.sidebar.number_input("Account Size", value=1000)
+st.sidebar.subheader("Risk")
 
-risk_percent = st.sidebar.slider("Risk %", 0.5, 5.0, 1.0)
+account_size = st.sidebar.number_input("Account Size ($)", value=1000)
 
-# ---------------- DATA ----------------
+risk_percent = st.sidebar.slider("Risk per Trade (%)", 0.5, 5.0, 1.0)
+
+st.sidebar.subheader("Trade Plan")
+
+entry_buffer_percent = st.sidebar.slider("Entry Buffer (%)", 0.05, 1.0, 0.15)
+
+stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
+
+reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
 def get_data(symbol):
 
@@ -42,7 +50,7 @@ def get_data(symbol):
 
         data = yf.Ticker(symbol).history(period="1d", interval="5m")
 
-        if data is None or len(data) < 4:
+        if data is None or len(data) < 6:
 
             return None
 
@@ -52,23 +60,47 @@ def get_data(symbol):
 
         return None
 
-def get_change(symbol):
+def analyze(symbol):
 
     data = get_data(symbol)
 
     if data is None:
 
-        return None, None
+        return None
 
-    price = data["Close"].iloc[-1]
+    closes = data["Close"]
 
-    start = data["Close"].iloc[-4]
+    highs = data["High"]
+
+    lows = data["Low"]
+
+    price = closes.iloc[-1]
+
+    start = closes.iloc[-5]
+
+    prev = closes.iloc[-2]
 
     change = ((price - start) / start) * 100
 
-    return float(price), float(change)
+    pullback = price < prev
 
-# ---------------- MARKET ----------------
+    recent_high = highs.iloc[-5:].max()
+
+    recent_low = lows.iloc[-5:].min()
+
+    return {
+
+        "price": float(price),
+
+        "change": float(change),
+
+        "pullback": bool(pullback),
+
+        "recent_high": float(recent_high),
+
+        "recent_low": float(recent_low),
+
+    }
 
 def get_market(change):
 
@@ -82,23 +114,21 @@ def get_market(change):
 
     return "CHOPPY"
 
-# ---------------- SIGNALS ----------------
+def trend_signal(change, pullback):
 
-def trend_signal(change):
-
-    if change >= 0.10:
+    if change >= 0.10 and pullback:
 
         return "🚀 STRONG BUY"
 
-    elif change >= 0.03:
+    elif change >= 0.05 and pullback:
 
         return "🟢 BUY"
 
-    elif change <= -0.10:
+    if change <= -0.10 and pullback:
 
         return "🔻 STRONG SELL"
 
-    elif change <= -0.03:
+    elif change <= -0.05 and pullback:
 
         return "🔴 SELL"
 
@@ -106,41 +136,103 @@ def trend_signal(change):
 
 def chop_signal(change):
 
-    if change >= 0.10:
+    if change >= 0.15:
 
         return "🔻 FADE SELL"
 
-    elif change <= -0.10:
+    elif change <= -0.15:
 
         return "🚀 FADE BUY"
 
     return None
 
-# ---------------- SESSION STATE ----------------
+def build_trade_plan(price, signal, recent_high, recent_low):
+
+    max_risk_dollars = account_size * (risk_percent / 100)
+
+    if "BUY" in signal:
+
+        entry = recent_high * (1 + entry_buffer_percent / 100)
+
+        stop = price * (1 - stop_percent / 100)
+
+        risk_per_share = entry - stop
+
+        target = entry + (risk_per_share * reward_ratio)
+
+    elif "SELL" in signal:
+
+        entry = recent_low * (1 - entry_buffer_percent / 100)
+
+        stop = price * (1 + stop_percent / 100)
+
+        risk_per_share = stop - entry
+
+        target = entry - (risk_per_share * reward_ratio)
+
+    else:
+
+        return None
+
+    if risk_per_share <= 0:
+
+        return None
+
+    shares = int(max_risk_dollars // risk_per_share)
+
+    return {
+
+        "Entry": round(entry, 2),
+
+        "Stop": round(stop, 2),
+
+        "Target": round(target, 2),
+
+        "Risk/Share": round(risk_per_share, 2),
+
+        "Shares": shares,
+
+        "Max Risk $": round(shares * risk_per_share, 2),
+
+    }
 
 if "last_top" not in st.session_state:
 
     st.session_state.last_top = None
 
-# ---------------- MAIN LOOP ----------------
-
 placeholder = st.empty()
 
 while True:
 
-    spy_price, spy_change = get_change("SPY")
+    spy = analyze("SPY")
 
-    market = get_market(spy_change)
+    if spy is None:
+
+        st.error("Could not load SPY data.")
+
+        break
+
+    market = get_market(spy["change"])
 
     results = []
 
     for symbol in symbols:
 
-        price, change = get_change(symbol)
+        data = analyze(symbol)
 
-        if price is None:
+        if data is None:
 
             continue
+
+        price = data["price"]
+
+        change = data["change"]
+
+        pullback = data["pullback"]
+
+        recent_high = data["recent_high"]
+
+        recent_low = data["recent_low"]
 
         active_mode = mode
 
@@ -152,7 +244,7 @@ while True:
 
         if active_mode == "TREND":
 
-            signal = trend_signal(change)
+            signal = trend_signal(change, pullback)
 
             if market == "BULLISH" and signal and "BUY" not in signal:
 
@@ -170,9 +262,13 @@ while True:
 
             continue
 
-        score = round(abs(change) * 300, 1)
+        plan = build_trade_plan(price, signal, recent_high, recent_low)
 
-        risk = account_size * (risk_percent / 100)
+        if plan is None:
+
+            continue
+
+        score = round(abs(change) * 300 + (5 if pullback else 0), 1)
 
         results.append({
 
@@ -186,7 +282,9 @@ while True:
 
             "Signal": signal,
 
-            "Risk": round(risk, 2)
+            "Pullback": "✔" if pullback else "",
+
+            **plan
 
         })
 
@@ -198,17 +296,17 @@ while True:
 
         c1, c2, c3 = st.columns(3)
 
-        c1.metric("SPY", round(spy_price, 2))
+        c1.metric("SPY", round(spy["price"], 2))
 
-        c2.metric("20m %", round(spy_change, 3))
+        c2.metric("20m %", round(spy["change"], 3))
 
         c3.metric("Market", market)
 
-        st.subheader("🎯 Trade Opportunities")
+        st.subheader("🎯 Entry Setups")
 
         if df.empty:
 
-            st.warning("No setups — stay patient.")
+            st.warning("No clean entry setups right now. Wait.")
 
         else:
 
@@ -220,23 +318,29 @@ while True:
 
             top = df.iloc[0]
 
-            # 🔥 ALERT SYSTEM
-
             if top["Score"] >= alert_threshold:
 
                 if st.session_state.last_top != top["Symbol"]:
 
                     st.session_state.last_top = top["Symbol"]
 
-                    st.success(f"🚨 NEW ALERT: {top['Symbol']} | {top['Signal']} | Score {top['Score']}")
+                    st.success(
+
+                        f"🚨 TOP ENTRY: {top['Symbol']} | {top['Signal']} | "
+
+                        f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']} | "
+
+                        f"Shares {top['Shares']}"
+
+                    )
 
                 else:
 
-                    st.info(f"Top Trade: {top['Symbol']} | {top['Signal']}")
+                    st.info(f"Top setup still: {top['Symbol']} | {top['Signal']}")
 
             else:
 
-                st.info("No high-quality alerts yet")
+                st.info("No high-quality entry alerts.")
 
     if not auto_refresh:
 
@@ -245,8 +349,6 @@ while True:
     time.sleep(30)
 
     st.rerun()
-
-# ---------------- NOTES ----------------
 
 st.subheader("Notes")
 
