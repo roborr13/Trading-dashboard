@@ -4,27 +4,53 @@ import yfinance as yf
 
 import pandas as pd
 
-# --- SAFE TWILIO SETUP ---
+# --- TWILIO ---
 
-try:
-
-    from twilio.rest import Client
-
-    TWILIO_READY = True
-
-except:
-
-    TWILIO_READY = False
+from twilio.rest import Client
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("With SMS Alerts (safe mode)")
+st.caption("SMS Debug Mode")
 
 symbols = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"]
 
-# --- GET DATA ---
+# --- TEST SMS BUTTON ---
+
+st.subheader("🧪 SMS Test")
+
+if st.button("Send Test SMS"):
+
+    try:
+
+        account_sid = st.secrets["TWILIO_ACCOUNT_SID"]
+
+        auth_token = st.secrets["TWILIO_AUTH_TOKEN"]
+
+        from_number = st.secrets["TWILIO_PHONE_NUMBER"]
+
+        to_number = st.secrets["YOUR_PHONE_NUMBER"]
+
+        client = Client(account_sid, auth_token)
+
+        message = client.messages.create(
+
+            body="🚀 TEST MESSAGE from your Trading App",
+
+            from_=from_number,
+
+            to=to_number
+
+        )
+
+        st.success(f"Message sent! SID: {message.sid}")
+
+    except Exception as e:
+
+        st.error(f"Twilio Error: {e}")
+
+# --- BASIC SCANNER (unchanged) ---
 
 def get_data(symbol):
 
@@ -42,69 +68,9 @@ def get_data(symbol):
 
         return None
 
-# --- SIGNAL LOGIC ---
-
-def get_signal(change):
-
-    if change >= 0.30:
-
-        return "🚀 STRONG BUY"
-
-    elif change >= 0.08:
-
-        return "🟢 BUY"
-
-    elif change <= -0.30:
-
-        return "🔻 STRONG SELL"
-
-    elif change <= -0.08:
-
-        return "🔴 SELL"
-
-    else:
-
-        return "⚪ NO TRADE"
-
-# --- SEND SMS ---
-
-def send_sms(message):
-
-    if not TWILIO_READY:
-
-        return
-
-    try:
-
-        client = Client(
-
-            st.secrets["TWILIO_ACCOUNT_SID"],
-
-            st.secrets["TWILIO_AUTH_TOKEN"]
-
-        )
-
-        client.messages.create(
-
-            body=message,
-
-            from_=st.secrets["TWILIO_PHONE_NUMBER"],
-
-            to=st.secrets["YOUR_PHONE_NUMBER"]
-
-        )
-
-    except:
-
-        pass  # prevents crash
-
-# --- RUN SCAN ---
-
 if st.button("Run Scan"):
 
     results = []
-
-    alerts = []
 
     for symbol in symbols:
 
@@ -120,7 +86,25 @@ if st.button("Run Scan"):
 
         change = ((price - start) / start) * 100
 
-        signal = get_signal(change)
+        if change >= 0.30:
+
+            signal = "🚀 STRONG BUY"
+
+        elif change >= 0.08:
+
+            signal = "🟢 BUY"
+
+        elif change <= -0.30:
+
+            signal = "🔻 STRONG SELL"
+
+        elif change <= -0.08:
+
+            signal = "🔴 SELL"
+
+        else:
+
+            signal = "⚪ NO TRADE"
 
         results.append({
 
@@ -134,36 +118,8 @@ if st.button("Run Scan"):
 
         })
 
-        # --- ALERT TRIGGER ---
-
-        if "STRONG" in signal:
-
-            alerts.append(f"{symbol} {signal} ({round(change,2)}%)")
-
     df = pd.DataFrame(results)
 
     st.subheader("Scan Results")
 
     st.dataframe(df, use_container_width=True)
-
-    # --- ALERT DISPLAY ---
-
-    st.subheader("🚨 Alerts")
-
-    if alerts:
-
-        for alert in alerts:
-
-            st.error(alert)
-
-        # send ONE combined SMS
-
-        send_sms(" | ".join(alerts))
-
-    else:
-
-        st.success("No strong alerts")
-
-st.subheader("Notes")
-
-st.text_area("Journal")
