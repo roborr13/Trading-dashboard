@@ -10,7 +10,7 @@ from twilio.rest import Client
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO — Final Version")
+st.title("📈 Trading Scanner PRO")
 
 st.caption("Paper trading only. Sends SMS alerts for high-quality setups.")
 
@@ -48,7 +48,7 @@ reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
 st.sidebar.subheader("Alert Settings")
 
-minimum_score = st.sidebar.slider("Minimum Alert Score", 20, 100, 30)
+minimum_score = st.sidebar.slider("Minimum Alert Score", 20, 100, 40)
 
 cooldown_minutes = st.sidebar.slider("Alert Cooldown Minutes", 5, 60, 15)
 
