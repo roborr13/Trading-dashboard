@@ -4,9 +4,11 @@ import yfinance as yf
 
 import pandas as pd
 
+import time
+
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO")
+st.title("📈 Trading Scanner PRO (LIVE ALERTS)")
 
 # ---------------- SETTINGS ----------------
 
@@ -22,15 +24,13 @@ symbols_input = st.sidebar.text_input(
 
 symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
-mode = st.sidebar.selectbox(
+mode = st.sidebar.selectbox("Mode", ["AUTO", "TREND", "CHOP"])
 
-    "Trading Mode",
+alert_threshold = st.sidebar.slider("Alert Score Threshold", 50, 200, 100)
 
-    ["AUTO", "TREND", "CHOP"]
+auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)", True)
 
-)
-
-account_size = st.sidebar.number_input("Account Size ($)", value=1000)
+account_size = st.sidebar.number_input("Account Size", value=1000)
 
 risk_percent = st.sidebar.slider("Risk %", 0.5, 5.0, 1.0)
 
@@ -64,25 +64,23 @@ def get_change(symbol):
 
     start = data["Close"].iloc[-4]
 
-    change_pct = ((price - start) / start) * 100
+    change = ((price - start) / start) * 100
 
-    return float(price), float(change_pct)
+    return float(price), float(change)
 
 # ---------------- MARKET ----------------
 
-def get_market(spy_change):
+def get_market(change):
 
-    if spy_change >= 0.05:
+    if change >= 0.05:
 
         return "BULLISH"
 
-    elif spy_change <= -0.05:
+    elif change <= -0.05:
 
         return "BEARISH"
 
-    else:
-
-        return "CHOPPY"
+    return "CHOPPY"
 
 # ---------------- SIGNALS ----------------
 
@@ -118,23 +116,21 @@ def chop_signal(change):
 
     return None
 
-# ---------------- SCAN ----------------
+# ---------------- SESSION STATE ----------------
 
-if st.button("Run Scan"):
+if "last_top" not in st.session_state:
+
+    st.session_state.last_top = None
+
+# ---------------- MAIN LOOP ----------------
+
+placeholder = st.empty()
+
+while True:
 
     spy_price, spy_change = get_change("SPY")
 
     market = get_market(spy_change)
-
-    st.subheader("Market")
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("SPY", round(spy_price, 2))
-
-    c2.metric("20m %", round(spy_change, 3))
-
-    c3.metric("Market", market)
 
     results = []
 
@@ -146,15 +142,13 @@ if st.button("Run Scan"):
 
             continue
 
-        signal = None
-
-        # 🔥 MODE LOGIC
-
         active_mode = mode
 
         if mode == "AUTO":
 
             active_mode = "TREND" if market != "CHOPPY" else "CHOP"
+
+        signal = None
 
         if active_mode == "TREND":
 
@@ -178,7 +172,7 @@ if st.button("Run Scan"):
 
         score = round(abs(change) * 300, 1)
 
-        risk_amount = account_size * (risk_percent / 100)
+        risk = account_size * (risk_percent / 100)
 
         results.append({
 
@@ -192,32 +186,68 @@ if st.button("Run Scan"):
 
             "Signal": signal,
 
-            "Risk $": round(risk_amount, 2)
+            "Risk": round(risk, 2)
 
         })
 
     df = pd.DataFrame(results)
 
-    st.subheader("🎯 Trade Opportunities")
+    with placeholder.container():
 
-    if df.empty:
+        st.subheader("Market")
 
-        st.warning("No setups — this is normal. Stay patient.")
+        c1, c2, c3 = st.columns(3)
 
-    else:
+        c1.metric("SPY", round(spy_price, 2))
 
-        df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
+        c2.metric("20m %", round(spy_change, 3))
 
-        df.index = df.index + 1
+        c3.metric("Market", market)
 
-        st.dataframe(df, use_container_width=True)
+        st.subheader("🎯 Trade Opportunities")
 
-        top = df.iloc[0]
+        if df.empty:
 
-        st.success(f"Top Trade: {top['Symbol']} | {top['Signal']}")
+            st.warning("No setups — stay patient.")
+
+        else:
+
+            df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
+
+            df.index = df.index + 1
+
+            st.dataframe(df, use_container_width=True)
+
+            top = df.iloc[0]
+
+            # 🔥 ALERT SYSTEM
+
+            if top["Score"] >= alert_threshold:
+
+                if st.session_state.last_top != top["Symbol"]:
+
+                    st.session_state.last_top = top["Symbol"]
+
+                    st.success(f"🚨 NEW ALERT: {top['Symbol']} | {top['Signal']} | Score {top['Score']}")
+
+                else:
+
+                    st.info(f"Top Trade: {top['Symbol']} | {top['Signal']}")
+
+            else:
+
+                st.info("No high-quality alerts yet")
+
+    if not auto_refresh:
+
+        break
+
+    time.sleep(30)
+
+    st.rerun()
 
 # ---------------- NOTES ----------------
 
 st.subheader("Notes")
 
-st.text_area("Write your thoughts")
+st.text_area("Journal")
