@@ -38,17 +38,15 @@ def get_intraday_data(symbol):
 
         ticker = yf.Ticker(symbol)
 
-        # Get 5-minute candles (last day)
-
         data = ticker.history(period="1d", interval="5m")
 
-        if data is None or len(data) < 3:
+        if data is None or len(data) < 4:
 
             return None
 
         return data
 
-    except:
+    except Exception:
 
         return None
 
@@ -90,7 +88,7 @@ if st.button("Run Scan"):
 
                 "Price": "-",
 
-                "5m Change %": "-",
+                "20m Change %": "-",
 
                 "Signal": "DATA ERROR",
 
@@ -104,17 +102,17 @@ if st.button("Run Scan"):
 
             continue
 
-        # Current price (latest candle close)
-
         price = data["Close"].iloc[-1]
 
-        # Previous 5-min candle close
+        recent = data["Close"].iloc[-4:]
 
-        prev_price = data["Close"].iloc[-2]
+        start_price = recent.iloc[0]
 
-        change = price - prev_price
+        end_price = recent.iloc[-1]
 
-        change_percent = (change / prev_price) * 100
+        change = end_price - start_price
+
+        change_percent = (change / start_price) * 100
 
         signal = get_signal(change_percent)
 
@@ -130,7 +128,7 @@ if st.button("Run Scan"):
 
             "Price": round(float(price), 2),
 
-            "5m Change %": round(float(change_percent), 2),
+            "20m Change %": round(float(change_percent), 2),
 
             "Signal": signal,
 
@@ -144,7 +142,7 @@ if st.button("Run Scan"):
 
     df = pd.DataFrame(results)
 
-    st.subheader("Scan Results (5-Min Momentum)")
+    st.subheader("Scan Results (20-Min Momentum)")
 
     st.dataframe(df, use_container_width=True)
 
