@@ -12,7 +12,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Paper trading only. Sends SMS alerts for high-quality setups.")
+st.caption("Paper trading only. Sends SMS alerts only in bullish/bearish markets.")
 
 # ---------- SETTINGS ----------
 
@@ -452,7 +452,11 @@ def display_app():
 
         )
 
-        if send_texts and can_alert(top["Symbol"], top["Signal"]):
+        if market == "CHOPPY":
+
+            st.warning("CHOPPY market — SMS blocked.")
+
+        elif send_texts and can_alert(top["Symbol"], top["Signal"]):
 
             if send_sms(alert_message):
 
