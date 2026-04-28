@@ -8,11 +8,9 @@ import time
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO (ALERTS)")
+st.title("📈 Trading Scanner PRO (READY ALERTS)")
 
 st.caption("Paper trading system — no real trades are placed")
-
-# ---------------- SETTINGS ----------------
 
 st.sidebar.header("Settings")
 
@@ -44,17 +42,15 @@ st.sidebar.subheader("Trade Plan")
 
 entry_buffer_percent = st.sidebar.slider("Entry Buffer (%)", 0.05, 1.0, 0.15)
 
+entry_trigger_buffer = st.sidebar.slider("Entry Trigger Distance (%)", 0.05, 1.0, 0.2)
+
 stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
 
 reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
-# ---------------- SESSION ----------------
-
 if "last_alert" not in st.session_state:
 
     st.session_state.last_alert = None
-
-# ---------------- DATA ----------------
 
 def get_data(symbol):
 
@@ -102,8 +98,6 @@ def analyze(symbol):
 
     return price, change, pullback, recent_high, recent_low
 
-# ---------------- MARKET ----------------
-
 def get_market(change):
 
     if change >= 0.05:
@@ -115,8 +109,6 @@ def get_market(change):
         return "BEARISH"
 
     return "CHOPPY"
-
-# ---------------- SIGNAL ----------------
 
 def trend_signal(change, pullback):
 
@@ -137,8 +129,6 @@ def trend_signal(change, pullback):
         return "🔴 SELL"
 
     return None
-
-# ---------------- TRADE PLAN ----------------
 
 def build_plan(price, signal, high, low):
 
@@ -174,9 +164,11 @@ def build_plan(price, signal, high, low):
 
     shares = int(max_risk // risk_per_share)
 
-    return entry, stop, target, shares, risk_per_share
+    distance = abs(price - entry) / entry * 100
 
-# ---------------- GRADING ----------------
+    ready = distance <= entry_trigger_buffer
+
+    return entry, stop, target, shares, risk_per_share, ready, distance
 
 def grade_trade(change, pullback, market, signal):
 
@@ -238,8 +230,6 @@ def play_sound():
 
     )
 
-# ---------------- APP ----------------
-
 placeholder = st.empty()
 
 while True:
@@ -294,7 +284,7 @@ while True:
 
             continue
 
-        entry, stop, target, shares, risk_ps = plan
+        entry, stop, target, shares, risk_ps, ready, distance = plan
 
         score, grade = grade_trade(change, pullback, market, signal)
 
@@ -307,6 +297,8 @@ while True:
             "Grade": grade,
 
             "Score": round(score, 1),
+
+            "Status": "🟢 READY" if ready else "⏳ WAIT",
 
             "Symbol": symbol,
 
@@ -322,7 +314,9 @@ while True:
 
             "Target": round(target, 2),
 
-            "Shares": shares
+            "Shares": shares,
+
+            "Distance %": round(distance, 3)
 
         })
 
@@ -340,11 +334,11 @@ while True:
 
         c3.metric("Market", market)
 
-        st.subheader("🚨 Alerts")
+        st.subheader("🚨 Ready Alerts")
 
         if df.empty:
 
-            st.warning("No alert setups right now.")
+            st.warning("No A/A+ setups right now.")
 
         else:
 
@@ -352,41 +346,49 @@ while True:
 
             df.index += 1
 
-            top = df.iloc[0]
+            ready_df = df[df["Status"] == "🟢 READY"]
 
-            alert_key = f"{top['Symbol']}-{top['Signal']}-{top['Entry']}"
+            if ready_df.empty:
 
-            if alert_allowed(top["Grade"]):
+                st.info("Setups found, but none are close enough to entry yet.")
 
-                if st.session_state.last_alert != alert_key:
+            else:
 
-                    st.session_state.last_alert = alert_key
+                top = ready_df.iloc[0]
 
-                    st.error(
+                alert_key = f"{top['Symbol']}-{top['Signal']}-{top['Entry']}"
 
-                        f"🚨 NEW ALERT: {top['Symbol']} | {top['Grade']} | {top['Signal']}"
+                if alert_allowed(top["Grade"]):
 
-                    )
+                    if st.session_state.last_alert != alert_key:
 
-                    st.success(
+                        st.session_state.last_alert = alert_key
 
-                        f"Entry: {top['Entry']} | Stop: {top['Stop']} | "
+                        st.error(
 
-                        f"Target: {top['Target']} | Shares: {top['Shares']}"
+                            f"🚨 LIVE TRADE READY: {top['Symbol']} | {top['Grade']} | {top['Signal']}"
 
-                    )
+                        )
 
-                    if sound_alerts:
+                        st.success(
 
-                        play_sound()
+                            f"Entry: {top['Entry']} | Stop: {top['Stop']} | "
 
-                else:
+                            f"Target: {top['Target']} | Shares: {top['Shares']}"
 
-                    st.info(
+                        )
 
-                        f"Active alert: {top['Symbol']} | {top['Signal']} | Entry {top['Entry']}"
+                        if sound_alerts:
 
-                    )
+                            play_sound()
+
+                    else:
+
+                        st.info(
+
+                            f"Active ready trade: {top['Symbol']} | {top['Signal']} | Entry {top['Entry']}"
+
+                        )
 
             st.subheader("🎯 A/A+ Setups")
 
