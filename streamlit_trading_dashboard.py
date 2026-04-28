@@ -4,61 +4,49 @@ import yfinance as yf
 
 import pandas as pd
 
-import time
+from twilio.rest import Client
+
+# -------------------------
+
+# 🔑 TWILIO SETTINGS (FILL THESE)
+
+# -------------------------
+
+ACCOUNT_SID = "PASTE_YOUR_SID"
+
+AUTH_TOKEN = "PASTE_YOUR_TOKEN"
+
+TWILIO_NUMBER = "+1XXXXXXXXXX"
+
+YOUR_NUMBER = "+1XXXXXXXXXX"
+
+client = Client(ACCOUNT_SID, AUTH_TOKEN)
+
+# -------------------------
+
+# APP CONFIG
+
+# -------------------------
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
-st.title("📈 Trading Scanner PRO (READY ALERTS)")
+st.title("📈 Trading Scanner PRO (LIVE SMS ALERTS)")
 
-st.caption("Paper trading system — no real trades are placed")
+symbols = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"]
 
-st.sidebar.header("Settings")
+# -------------------------
 
-symbols_input = st.sidebar.text_input(
+# GET DATA
 
-    "Watchlist",
-
-    "SPY, QQQ, AAPL, MSFT, NVDA, TSLA"
-
-)
-
-symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
-
-mode = st.sidebar.selectbox("Mode", ["AUTO", "TREND", "CHOP"])
-
-auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)", True)
-
-alert_grade = st.sidebar.selectbox("Alert Minimum Grade", ["A+", "A"])
-
-sound_alerts = st.sidebar.checkbox("Sound Alert", True)
-
-st.sidebar.subheader("Risk")
-
-account_size = st.sidebar.number_input("Account Size ($)", value=1000)
-
-risk_percent = st.sidebar.slider("Risk per Trade (%)", 0.5, 5.0, 1.0)
-
-st.sidebar.subheader("Trade Plan")
-
-entry_buffer_percent = st.sidebar.slider("Entry Buffer (%)", 0.05, 1.0, 0.15)
-
-entry_trigger_buffer = st.sidebar.slider("Entry Trigger Distance (%)", 0.05, 1.0, 0.2)
-
-stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
-
-reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
-
-if "last_alert" not in st.session_state:
-
-    st.session_state.last_alert = None
+# -------------------------
 
 def get_data(symbol):
 
     try:
 
-        data = yf.Ticker(symbol).history(period="1d", interval="5m")
+        data = yf.download(symbol, period="1d", interval="5m")
 
-        if data is None or len(data) < 6:
+        if data is None or data.empty:
 
             return None
 
@@ -68,340 +56,118 @@ def get_data(symbol):
 
         return None
 
-def analyze(symbol):
+# -------------------------
 
-    data = get_data(symbol)
+# SEND SMS
 
-    if data is None:
+# -------------------------
 
-        return None
+def send_sms(message):
 
-    closes = data["Close"]
+    try:
 
-    highs = data["High"]
+        client.messages.create(
 
-    lows = data["Low"]
+            body=message,
 
-    price = closes.iloc[-1]
+            from_=TWILIO_NUMBER,
 
-    start = closes.iloc[-5]
+            to=YOUR_NUMBER
 
-    prev = closes.iloc[-2]
+        )
 
-    change = ((price - start) / start) * 100
+    except Exception as e:
 
-    pullback = price < prev
+        st.error(f"SMS failed: {e}")
 
-    recent_high = highs.iloc[-5:].max()
+# -------------------------
 
-    recent_low = lows.iloc[-5:].min()
+# RUN SCAN
 
-    return price, change, pullback, recent_high, recent_low
+# -------------------------
 
-def get_market(change):
-
-    if change >= 0.05:
-
-        return "BULLISH"
-
-    elif change <= -0.05:
-
-        return "BEARISH"
-
-    return "CHOPPY"
-
-def trend_signal(change, pullback):
-
-    if change >= 0.10 and pullback:
-
-        return "🚀 STRONG BUY"
-
-    elif change >= 0.05 and pullback:
-
-        return "🟢 BUY"
-
-    if change <= -0.10 and pullback:
-
-        return "🔻 STRONG SELL"
-
-    elif change <= -0.05 and pullback:
-
-        return "🔴 SELL"
-
-    return None
-
-def build_plan(price, signal, high, low):
-
-    max_risk = account_size * (risk_percent / 100)
-
-    if "BUY" in signal:
-
-        entry = high * (1 + entry_buffer_percent / 100)
-
-        stop = price * (1 - stop_percent / 100)
-
-        risk_per_share = entry - stop
-
-        target = entry + (risk_per_share * reward_ratio)
-
-    elif "SELL" in signal:
-
-        entry = low * (1 - entry_buffer_percent / 100)
-
-        stop = price * (1 + stop_percent / 100)
-
-        risk_per_share = stop - entry
-
-        target = entry - (risk_per_share * reward_ratio)
-
-    else:
-
-        return None
-
-    if risk_per_share <= 0:
-
-        return None
-
-    shares = int(max_risk // risk_per_share)
-
-    distance = abs(price - entry) / entry * 100
-
-    ready = distance <= entry_trigger_buffer
-
-    return entry, stop, target, shares, risk_per_share, ready, distance
-
-def grade_trade(change, pullback, market, signal):
-
-    score = abs(change) * 100
-
-    if pullback:
-
-        score += 10
-
-    if market == "BULLISH" and "BUY" in signal:
-
-        score += 10
-
-    if market == "BEARISH" and "SELL" in signal:
-
-        score += 10
-
-    if score >= 30:
-
-        grade = "A+"
-
-    elif score >= 20:
-
-        grade = "A"
-
-    elif score >= 10:
-
-        grade = "B"
-
-    else:
-
-        grade = "C"
-
-    return score, grade
-
-def alert_allowed(grade):
-
-    if alert_grade == "A+":
-
-        return grade == "A+"
-
-    return grade in ["A+", "A"]
-
-def play_sound():
-
-    st.markdown(
-
-        """
-
-        <audio autoplay>
-
-            <source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg">
-
-        </audio>
-
-        """,
-
-        unsafe_allow_html=True
-
-    )
-
-placeholder = st.empty()
-
-while True:
-
-    spy = analyze("SPY")
-
-    if spy is None:
-
-        st.error("SPY data failed")
-
-        break
-
-    spy_price, spy_change, _, _, _ = spy
-
-    market = get_market(spy_change)
+if st.button("Run Scan"):
 
     results = []
 
+    alerts = []
+
     for symbol in symbols:
 
-        data = analyze(symbol)
+        data = get_data(symbol)
 
-        if data is None:
-
-            continue
-
-        price, change, pullback, high, low = data
-
-        active_mode = mode
-
-        if mode == "AUTO":
-
-            active_mode = "TREND" if market != "CHOPPY" else "CHOP"
-
-        signal = trend_signal(change, pullback)
-
-        if not signal:
+        if data is None or len(data) < 5:
 
             continue
 
-        if market == "BULLISH" and "BUY" not in signal:
+        price = float(data["Close"].iloc[-1])
 
-            continue
+        prev = float(data["Close"].iloc[-5])
 
-        if market == "BEARISH" and "SELL" not in signal:
+        change_pct = ((price - prev) / prev) * 100
 
-            continue
+        signal = "NO TRADE"
 
-        plan = build_plan(price, signal, high, low)
+        # STRONG SIGNALS
 
-        if not plan:
+        if change_pct > 0.3:
 
-            continue
+            signal = "🚀 STRONG BUY"
 
-        entry, stop, target, shares, risk_ps, ready, distance = plan
+        elif change_pct < -0.3:
 
-        score, grade = grade_trade(change, pullback, market, signal)
+            signal = "🔻 STRONG SELL"
 
-        if grade not in ["A+", "A"]:
+        elif change_pct > 0.1:
 
-            continue
+            signal = "BUY"
+
+        elif change_pct < -0.1:
+
+            signal = "SELL"
+
+        score = abs(change_pct) * 100
 
         results.append({
 
-            "Grade": grade,
-
             "Score": round(score, 1),
-
-            "Status": "🟢 READY" if ready else "⏳ WAIT",
 
             "Symbol": symbol,
 
             "Price": round(price, 2),
 
-            "20m %": round(change, 3),
+            "5m %": round(change_pct, 3),
 
-            "Signal": signal,
-
-            "Entry": round(entry, 2),
-
-            "Stop": round(stop, 2),
-
-            "Target": round(target, 2),
-
-            "Shares": shares,
-
-            "Distance %": round(distance, 3)
+            "Signal": signal
 
         })
 
-    df = pd.DataFrame(results)
+        # ALERT CONDITION
 
-    with placeholder.container():
+        if "STRONG" in signal:
 
-        st.subheader("Market")
+            alerts.append((symbol, signal, price, change_pct))
 
-        c1, c2, c3 = st.columns(3)
+    df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
-        c1.metric("SPY", round(spy_price, 2))
+    st.subheader("📊 Trade Opportunities")
 
-        c2.metric("20m %", round(spy_change, 3))
+    st.dataframe(df, use_container_width=True)
 
-        c3.metric("Market", market)
+    # -------------------------
 
-        st.subheader("🚨 Ready Alerts")
+    # 🚨 SEND ALERTS
 
-        if df.empty:
+    # -------------------------
 
-            st.warning("No A/A+ setups right now.")
+    for symbol, signal, price, change in alerts:
 
-        else:
+        msg = f"{symbol} | {signal} | Price: {round(price,2)} | Move: {round(change,2)}%"
 
-            df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
+        st.warning(f"🚨 ALERT: {msg}")
 
-            df.index += 1
+        send_sms(msg)
 
-            ready_df = df[df["Status"] == "🟢 READY"]
+    if not alerts:
 
-            if ready_df.empty:
-
-                st.info("Setups found, but none are close enough to entry yet.")
-
-            else:
-
-                top = ready_df.iloc[0]
-
-                alert_key = f"{top['Symbol']}-{top['Signal']}-{top['Entry']}"
-
-                if alert_allowed(top["Grade"]):
-
-                    if st.session_state.last_alert != alert_key:
-
-                        st.session_state.last_alert = alert_key
-
-                        st.error(
-
-                            f"🚨 LIVE TRADE READY: {top['Symbol']} | {top['Grade']} | {top['Signal']}"
-
-                        )
-
-                        st.success(
-
-                            f"Entry: {top['Entry']} | Stop: {top['Stop']} | "
-
-                            f"Target: {top['Target']} | Shares: {top['Shares']}"
-
-                        )
-
-                        if sound_alerts:
-
-                            play_sound()
-
-                    else:
-
-                        st.info(
-
-                            f"Active ready trade: {top['Symbol']} | {top['Signal']} | Entry {top['Entry']}"
-
-                        )
-
-            st.subheader("🎯 A/A+ Setups")
-
-            st.dataframe(df, use_container_width=True)
-
-    if not auto_refresh:
-
-        break
-
-    time.sleep(30)
-
-    st.rerun()
-
-st.subheader("Notes")
-
-st.text_area("Journal")
+        st.info("No strong alerts right now.")
