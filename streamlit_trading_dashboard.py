@@ -10,17 +10,17 @@ from datetime import datetime, time as dtime
 
 from zoneinfo import ZoneInfo
 
+from pathlib import Path
+
 from twilio.rest import Client
 
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Auto mode ON. Refreshes every 10 seconds.")
+st.caption("Auto scanner + SMS alerts + paper trade tracking")
 
-# ---------- SETTINGS ----------
-
-st.sidebar.header("Scanner Settings")
+LOG_FILE = Path("paper_trade_log.csv")
 
 symbols_input = st.sidebar.text_input(
 
@@ -52,13 +52,9 @@ minimum_score = 40
 
 cooldown_minutes = 15
 
-# ---------- STATE ----------
-
 if "last_alerts" not in st.session_state:
 
     st.session_state.last_alerts = {}
-
-# ---------- MARKET HOURS ----------
 
 def market_is_open():
 
@@ -73,8 +69,6 @@ def market_is_open():
     is_open_time = market_open <= now.time() <= market_close
 
     return is_weekday and is_open_time, now
-
-# ---------- SMS ----------
 
 def send_sms(message):
 
@@ -106,8 +100,6 @@ def send_sms(message):
 
         return False
 
-# ---------- DATA ----------
-
 def get_data(symbol):
 
     try:
@@ -123,6 +115,16 @@ def get_data(symbol):
     except:
 
         return None
+
+def get_current_price(symbol):
+
+    data = get_data(symbol)
+
+    if data is None:
+
+        return None
+
+    return float(data["Close"].iloc[-1])
 
 def analyze(symbol):
 
@@ -162,8 +164,6 @@ def analyze(symbol):
 
     }
 
-# ---------- MARKET ----------
-
 def get_market(change):
 
     if change >= 0.05:
@@ -175,8 +175,6 @@ def get_market(change):
         return "BEARISH"
 
     return "CHOPPY"
-
-# ---------- SIGNAL ----------
 
 def get_signal(change, pullback, market):
 
@@ -212,13 +210,13 @@ def get_signal(change, pullback, market):
 
     return "⚪ NO TRADE"
 
-# ---------- TRADE ----------
-
 def build_trade(symbol, data, signal, market):
 
     price = data["price"]
 
     if "BUY" in signal:
+
+        direction = "BUY"
 
         entry = data["recent_high"] * (1 + entry_buffer_percent / 100)
 
@@ -229,6 +227,8 @@ def build_trade(symbol, data, signal, market):
         target = entry + (risk * reward_ratio)
 
     elif "SELL" in signal:
+
+        direction = "SELL"
 
         entry = data["recent_low"] * (1 - entry_buffer_percent / 100)
 
@@ -276,6 +276,8 @@ def build_trade(symbol, data, signal, market):
 
         "Symbol": symbol,
 
+        "Direction": direction,
+
         "Signal": signal,
 
         "Score": round(score, 1),
@@ -291,8 +293,6 @@ def build_trade(symbol, data, signal, market):
         "Shares": shares
 
     }
-
-# ---------- ALERT CONTROL ----------
 
 def can_alert(symbol, signal):
 
@@ -310,7 +310,239 @@ def can_alert(symbol, signal):
 
     return False
 
-# ---------- RUN ----------
+def load_log():
+
+    if LOG_FILE.exists():
+
+        return pd.read_csv(LOG_FILE)
+
+    return pd.DataFrame(columns=[
+
+        "Opened",
+
+        "Closed",
+
+        "Symbol",
+
+        "Direction",
+
+        "Signal",
+
+        "Grade",
+
+        "Score",
+
+        "Entry",
+
+        "Stop",
+
+        "Target",
+
+        "Shares",
+
+        "Status",
+
+        "Exit Price",
+
+        "Result",
+
+        "Paper P/L"
+
+    ])
+
+def save_log(df):
+
+    df.to_csv(LOG_FILE, index=False)
+
+def trade_exists(log, symbol, signal, entry):
+
+    if log.empty:
+
+        return False
+
+    open_trades = log[
+
+        (log["Symbol"] == symbol) &
+
+        (log["Signal"] == signal) &
+
+        (log["Entry"] == entry) &
+
+        (log["Status"] == "OPEN")
+
+    ]
+
+    return not open_trades.empty
+
+def add_paper_trade(trade):
+
+    log = load_log()
+
+    if trade_exists(log, trade["Symbol"], trade["Signal"], trade["Entry"]):
+
+        return
+
+    new_trade = {
+
+        "Opened": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+
+        "Closed": "",
+
+        "Symbol": trade["Symbol"],
+
+        "Direction": trade["Direction"],
+
+        "Signal": trade["Signal"],
+
+        "Grade": trade["Grade"],
+
+        "Score": trade["Score"],
+
+        "Entry": trade["Entry"],
+
+        "Stop": trade["Stop"],
+
+        "Target": trade["Target"],
+
+        "Shares": trade["Shares"],
+
+        "Status": "OPEN",
+
+        "Exit Price": "",
+
+        "Result": "",
+
+        "Paper P/L": ""
+
+    }
+
+    log = pd.concat([log, pd.DataFrame([new_trade])], ignore_index=True)
+
+    save_log(log)
+
+def update_open_trades():
+
+    log = load_log()
+
+    if log.empty:
+
+        return log
+
+    for i, row in log.iterrows():
+
+        if row["Status"] != "OPEN":
+
+            continue
+
+        symbol = row["Symbol"]
+
+        direction = row["Direction"]
+
+        price = get_current_price(symbol)
+
+        if price is None:
+
+            continue
+
+        entry = float(row["Entry"])
+
+        stop = float(row["Stop"])
+
+        target = float(row["Target"])
+
+        shares = int(row["Shares"])
+
+        result = None
+
+        exit_price = None
+
+        if direction == "BUY":
+
+            if price <= stop:
+
+                result = "LOSS"
+
+                exit_price = stop
+
+            elif price >= target:
+
+                result = "WIN"
+
+                exit_price = target
+
+        elif direction == "SELL":
+
+            if price >= stop:
+
+                result = "LOSS"
+
+                exit_price = stop
+
+            elif price <= target:
+
+                result = "WIN"
+
+                exit_price = target
+
+        if result:
+
+            if direction == "BUY":
+
+                pnl = (exit_price - entry) * shares
+
+            else:
+
+                pnl = (entry - exit_price) * shares
+
+            log.at[i, "Closed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            log.at[i, "Status"] = "CLOSED"
+
+            log.at[i, "Exit Price"] = round(exit_price, 2)
+
+            log.at[i, "Result"] = result
+
+            log.at[i, "Paper P/L"] = round(pnl, 2)
+
+            msg = f"PAPER TRADE {result}: {symbol} | Exit {round(exit_price,2)} | P/L ${round(pnl,2)}"
+
+            send_sms(msg)
+
+    save_log(log)
+
+    return log
+
+def show_performance(log):
+
+    closed = log[log["Status"] == "CLOSED"]
+
+    if closed.empty:
+
+        st.info("No closed paper trades yet.")
+
+        return
+
+    wins = closed[closed["Result"] == "WIN"]
+
+    losses = closed[closed["Result"] == "LOSS"]
+
+    total = len(closed)
+
+    win_rate = round((len(wins) / total) * 100, 1)
+
+    pnl = pd.to_numeric(closed["Paper P/L"], errors="coerce").fillna(0).sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Closed Trades", total)
+
+    c2.metric("Wins", len(wins))
+
+    c3.metric("Losses", len(losses))
+
+    c4.metric("Win Rate", f"{win_rate}%")
+
+    st.metric("Net Paper P/L", f"${round(pnl, 2)}")
 
 def run():
 
@@ -326,7 +558,9 @@ def run():
 
     else:
 
-        st.warning("After hours — monitoring only (no alerts)")
+        st.warning("After hours — monitoring only")
+
+    log = update_open_trades()
 
     spy = analyze("SPY")
 
@@ -364,11 +598,7 @@ def run():
 
             setups.append(trade)
 
-    if not setups:
-
-        st.info("No setups")
-
-    else:
+    if setups:
 
         df = pd.DataFrame(setups).sort_values("Score", ascending=False)
 
@@ -380,15 +610,7 @@ def run():
 
         st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
 
-        if not open_now:
-
-            st.warning("After hours — SMS blocked")
-
-        elif "STRONG" not in top["Signal"]:
-
-            st.warning("Not strong enough — no SMS")
-
-        elif send_texts and can_alert(top["Symbol"], top["Signal"]):
+        if open_now and "STRONG" in top["Signal"] and send_texts and can_alert(top["Symbol"], top["Signal"]):
 
             msg = f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']}"
 
@@ -396,9 +618,25 @@ def run():
 
                 st.success("SMS sent")
 
-        st.subheader("Ranked")
+            add_paper_trade(top)
+
+        st.subheader("Ranked Setups")
 
         st.dataframe(df)
+
+    else:
+
+        st.info("No setups")
+
+    st.subheader("Paper Trade Performance")
+
+    log = load_log()
+
+    show_performance(log)
+
+    st.subheader("Paper Trade Log")
+
+    st.dataframe(log.tail(20), use_container_width=True)
 
 run()
 
