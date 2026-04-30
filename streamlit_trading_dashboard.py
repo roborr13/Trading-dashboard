@@ -18,7 +18,7 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Auto scanner + SMS alerts + paper trade tracking")
+st.caption("Auto scanner + SMS alerts + paper trade tracking + volume confirmation")
 
 LOG_FILE = Path("paper_trade_log.csv")
 
@@ -48,6 +48,10 @@ stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
 
 reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
+st.sidebar.subheader("Volume Filter")
+
+min_volume_ratio = st.sidebar.slider("Minimum Volume Strength", 1.0, 3.0, 1.2)
+
 minimum_score = 40
 
 cooldown_minutes = 15
@@ -64,11 +68,7 @@ def market_is_open():
 
     market_close = dtime(16, 0)
 
-    is_weekday = now.weekday() < 5
-
-    is_open_time = market_open <= now.time() <= market_close
-
-    return is_weekday and is_open_time, now
+    return now.weekday() < 5 and market_open <= now.time() <= market_close, now
 
 def send_sms(message):
 
@@ -106,7 +106,7 @@ def get_data(symbol):
 
         data = yf.Ticker(symbol).history(period="1d", interval="5m")
 
-        if data is None or len(data) < 6:
+        if data is None or len(data) < 10:
 
             return None
 
@@ -140,6 +140,8 @@ def analyze(symbol):
 
     lows = data["Low"]
 
+    volumes = data["Volume"]
+
     price = closes.iloc[-1]
 
     start = closes.iloc[-5]
@@ -149,6 +151,20 @@ def analyze(symbol):
     change = ((price - start) / start) * 100
 
     pullback = price < prev
+
+    current_volume = volumes.iloc[-1]
+
+    avg_volume = volumes.iloc[-10:-1].mean()
+
+    if avg_volume <= 0:
+
+        volume_ratio = 0
+
+    else:
+
+        volume_ratio = current_volume / avg_volume
+
+    volume_confirmed = volume_ratio >= min_volume_ratio
 
     return {
 
@@ -161,6 +177,10 @@ def analyze(symbol):
         "recent_high": highs.iloc[-5:].max(),
 
         "recent_low": lows.iloc[-5:].min(),
+
+        "volume_ratio": volume_ratio,
+
+        "volume_confirmed": volume_confirmed
 
     }
 
@@ -211,6 +231,10 @@ def get_signal(change, pullback, market):
     return "⚪ NO TRADE"
 
 def build_trade(symbol, data, signal, market):
+
+    if not data["volume_confirmed"]:
+
+        return None
 
     price = data["price"]
 
@@ -266,6 +290,10 @@ def build_trade(symbol, data, signal, market):
 
         score += 10
 
+    if data["volume_confirmed"]:
+
+        score += 10
+
     if score < minimum_score:
 
         return None
@@ -290,7 +318,9 @@ def build_trade(symbol, data, signal, market):
 
         "Target": round(target, 2),
 
-        "Shares": shares
+        "Shares": shares,
+
+        "Volume Strength": round(data["volume_ratio"], 2)
 
     }
 
@@ -318,35 +348,11 @@ def load_log():
 
     return pd.DataFrame(columns=[
 
-        "Opened",
+        "Opened", "Closed", "Symbol", "Direction", "Signal", "Grade", "Score",
 
-        "Closed",
+        "Entry", "Stop", "Target", "Shares", "Status",
 
-        "Symbol",
-
-        "Direction",
-
-        "Signal",
-
-        "Grade",
-
-        "Score",
-
-        "Entry",
-
-        "Stop",
-
-        "Target",
-
-        "Shares",
-
-        "Status",
-
-        "Exit Price",
-
-        "Result",
-
-        "Paper P/L"
+        "Exit Price", "Result", "Paper P/L"
 
     ])
 
@@ -434,11 +440,7 @@ def update_open_trades():
 
             continue
 
-        symbol = row["Symbol"]
-
-        direction = row["Direction"]
-
-        price = get_current_price(symbol)
+        price = get_current_price(row["Symbol"])
 
         if price is None:
 
@@ -451,6 +453,8 @@ def update_open_trades():
         target = float(row["Target"])
 
         shares = int(row["Shares"])
+
+        direction = row["Direction"]
 
         result = None
 
@@ -486,13 +490,7 @@ def update_open_trades():
 
         if result:
 
-            if direction == "BUY":
-
-                pnl = (exit_price - entry) * shares
-
-            else:
-
-                pnl = (entry - exit_price) * shares
+            pnl = (exit_price - entry) * shares if direction == "BUY" else (entry - exit_price) * shares
 
             log.at[i, "Closed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -504,9 +502,7 @@ def update_open_trades():
 
             log.at[i, "Paper P/L"] = round(pnl, 2)
 
-            msg = f"PAPER TRADE {result}: {symbol} | Exit {round(exit_price,2)} | P/L ${round(pnl,2)}"
-
-            send_sms(msg)
+            send_sms(f"PAPER TRADE {result}: {row['Symbol']} | Exit {round(exit_price,2)} | P/L ${round(pnl,2)}")
 
     save_log(log)
 
@@ -608,11 +604,25 @@ def run():
 
         st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
 
-        st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
+        st.success(
+
+            f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']} | "
+
+            f"Volume Strength {top['Volume Strength']}x"
+
+        )
 
         if open_now and "STRONG" in top["Signal"] and send_texts and can_alert(top["Symbol"], top["Signal"]):
 
-            msg = f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']}"
+            msg = (
+
+                f"{top['Symbol']} {top['Signal']} | "
+
+                f"Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']} | "
+
+                f"Volume {top['Volume Strength']}x"
+
+            )
 
             if send_sms(msg):
 
@@ -626,7 +636,7 @@ def run():
 
     else:
 
-        st.info("No setups")
+        st.info("No setups passing volume filter")
 
     st.subheader("Paper Trade Performance")
 
