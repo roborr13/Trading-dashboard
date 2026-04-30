@@ -18,21 +18,25 @@ st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
 
-st.caption("Auto scanner + SMS alerts + paper trade tracking + volume confirmation")
+st.caption("Scanner + Alerts + Paper Trading + Volume Confirmation")
 
 LOG_FILE = Path("paper_trade_log.csv")
+
+# ✅ BEST WATCHLIST (UPDATED)
 
 symbols_input = st.sidebar.text_input(
 
     "Watchlist",
 
-    "SPY, QQQ, AAPL, MSFT, NVDA, TSLA"
+    "SPY, QQQ, AAPL, MSFT, NVDA, TSLA, AMD, META, AMZN, GOOGL, XOM"
 
 )
 
 symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
 send_texts = st.sidebar.checkbox("Send SMS Alerts", True)
+
+# ---------- SETTINGS ----------
 
 st.sidebar.subheader("Risk Settings")
 
@@ -48,6 +52,8 @@ stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
 
 reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
 
+# ✅ VOLUME FILTER
+
 st.sidebar.subheader("Volume Filter")
 
 min_volume_ratio = st.sidebar.slider("Minimum Volume Strength", 1.0, 3.0, 1.2)
@@ -60,17 +66,17 @@ if "last_alerts" not in st.session_state:
 
     st.session_state.last_alerts = {}
 
+# ---------- MARKET ----------
+
 def market_is_open():
 
     now = datetime.now(ZoneInfo("America/New_York"))
 
-    market_open = dtime(9, 30)
+    return now.weekday() < 5 and dtime(9,30) <= now.time() <= dtime(16,0), now
 
-    market_close = dtime(16, 0)
+# ---------- SMS ----------
 
-    return now.weekday() < 5 and market_open <= now.time() <= market_close, now
-
-def send_sms(message):
+def send_sms(msg):
 
     try:
 
@@ -84,7 +90,7 @@ def send_sms(message):
 
         client.messages.create(
 
-            body=message,
+            body=msg,
 
             from_=st.secrets["TWILIO_PHONE_NUMBER"],
 
@@ -94,53 +100,43 @@ def send_sms(message):
 
         return True
 
-    except Exception as e:
-
-        st.error(f"SMS error: {e}")
+    except:
 
         return False
+
+# ---------- DATA ----------
 
 def get_data(symbol):
 
     try:
 
-        data = yf.Ticker(symbol).history(period="1d", interval="5m")
+        d = yf.Ticker(symbol).history(period="1d", interval="5m")
 
-        if data is None or len(data) < 10:
+        if d is None or len(d) < 10:
 
             return None
 
-        return data
+        return d
 
     except:
 
         return None
 
-def get_current_price(symbol):
-
-    data = get_data(symbol)
-
-    if data is None:
-
-        return None
-
-    return float(data["Close"].iloc[-1])
-
 def analyze(symbol):
 
-    data = get_data(symbol)
+    d = get_data(symbol)
 
-    if data is None:
+    if d is None:
 
         return None
 
-    closes = data["Close"]
+    closes = d["Close"]
 
-    highs = data["High"]
+    highs = d["High"]
 
-    lows = data["Low"]
+    lows = d["Low"]
 
-    volumes = data["Volume"]
+    volumes = d["Volume"]
 
     price = closes.iloc[-1]
 
@@ -152,19 +148,11 @@ def analyze(symbol):
 
     pullback = price < prev
 
-    current_volume = volumes.iloc[-1]
+    vol_now = volumes.iloc[-1]
 
-    avg_volume = volumes.iloc[-10:-1].mean()
+    vol_avg = volumes.iloc[-10:-1].mean()
 
-    if avg_volume <= 0:
-
-        volume_ratio = 0
-
-    else:
-
-        volume_ratio = current_volume / avg_volume
-
-    volume_confirmed = volume_ratio >= min_volume_ratio
+    vol_ratio = vol_now / vol_avg if vol_avg > 0 else 0
 
     return {
 
@@ -178,21 +166,17 @@ def analyze(symbol):
 
         "recent_low": lows.iloc[-5:].min(),
 
-        "volume_ratio": volume_ratio,
+        "volume_ratio": vol_ratio,
 
-        "volume_confirmed": volume_confirmed
+        "volume_ok": vol_ratio >= min_volume_ratio
 
     }
 
 def get_market(change):
 
-    if change >= 0.05:
+    if change >= 0.05: return "BULLISH"
 
-        return "BULLISH"
-
-    elif change <= -0.05:
-
-        return "BEARISH"
+    if change <= -0.05: return "BEARISH"
 
     return "CHOPPY"
 
@@ -200,67 +184,33 @@ def get_signal(change, pullback, market):
 
     if market == "BULLISH":
 
-        if change >= 0.10 and pullback:
+        if change >= 0.10 and pullback: return "🚀 STRONG BUY"
 
-            return "🚀 STRONG BUY"
+    if market == "BEARISH":
 
-        elif change >= 0.05 and pullback:
-
-            return "🟢 BUY"
-
-    elif market == "BEARISH":
-
-        if change <= -0.10 and pullback:
-
-            return "🔻 STRONG SELL"
-
-        elif change <= -0.05 and pullback:
-
-            return "🔴 SELL"
-
-    elif market == "CHOPPY":
-
-        if change >= 0.20:
-
-            return "🔻 FADE SELL"
-
-        elif change <= -0.20:
-
-            return "🚀 FADE BUY"
+        if change <= -0.10 and pullback: return "🔻 STRONG SELL"
 
     return "⚪ NO TRADE"
 
-def build_trade(symbol, data, signal, market):
+def build_trade(symbol, d, signal, market):
 
-    if not data["volume_confirmed"]:
+    if not d["volume_ok"]:
 
         return None
 
-    price = data["price"]
+    price = d["price"]
 
     if "BUY" in signal:
 
-        direction = "BUY"
-
-        entry = data["recent_high"] * (1 + entry_buffer_percent / 100)
+        entry = d["recent_high"] * (1 + entry_buffer_percent / 100)
 
         stop = price * (1 - stop_percent / 100)
 
         risk = entry - stop
 
-        target = entry + (risk * reward_ratio)
+        target = entry + risk * reward_ratio
 
-    elif "SELL" in signal:
-
-        direction = "SELL"
-
-        entry = data["recent_low"] * (1 - entry_buffer_percent / 100)
-
-        stop = price * (1 + stop_percent / 100)
-
-        risk = stop - entry
-
-        target = entry - (risk * reward_ratio)
+        direction = "BUY"
 
     else:
 
@@ -272,73 +222,31 @@ def build_trade(symbol, data, signal, market):
 
     shares = int((account_size * (risk_percent / 100)) // risk)
 
-    score = abs(data["change"]) * 100
-
-    if data["pullback"]:
-
-        score += 10
-
-    if "STRONG" in signal:
-
-        score += 10
-
-    if market == "BULLISH" and "BUY" in signal:
-
-        score += 10
-
-    if market == "BEARISH" and "SELL" in signal:
-
-        score += 10
-
-    if data["volume_confirmed"]:
-
-        score += 10
+    score = abs(d["change"]) * 100 + 10
 
     if score < minimum_score:
 
         return None
 
-    grade = "A+" if score >= 40 else "A"
-
     return {
 
         "Symbol": symbol,
 
-        "Direction": direction,
+        "Entry": round(entry,2),
 
-        "Signal": signal,
+        "Stop": round(stop,2),
 
-        "Score": round(score, 1),
-
-        "Grade": grade,
-
-        "Entry": round(entry, 2),
-
-        "Stop": round(stop, 2),
-
-        "Target": round(target, 2),
+        "Target": round(target,2),
 
         "Shares": shares,
 
-        "Volume Strength": round(data["volume_ratio"], 2)
+        "Score": score,
+
+        "Volume": round(d["volume_ratio"],2)
 
     }
 
-def can_alert(symbol, signal):
-
-    key = f"{symbol}-{signal}"
-
-    now = time.time()
-
-    last = st.session_state.last_alerts.get(key)
-
-    if last is None or (now - last > cooldown_minutes * 60):
-
-        st.session_state.last_alerts[key] = now
-
-        return True
-
-    return False
+# ---------- PAPER LOG ----------
 
 def load_log():
 
@@ -346,233 +254,29 @@ def load_log():
 
         return pd.read_csv(LOG_FILE)
 
-    return pd.DataFrame(columns=[
-
-        "Opened", "Closed", "Symbol", "Direction", "Signal", "Grade", "Score",
-
-        "Entry", "Stop", "Target", "Shares", "Status",
-
-        "Exit Price", "Result", "Paper P/L"
-
-    ])
+    return pd.DataFrame()
 
 def save_log(df):
 
     df.to_csv(LOG_FILE, index=False)
 
-def trade_exists(log, symbol, signal, entry):
-
-    if log.empty:
-
-        return False
-
-    open_trades = log[
-
-        (log["Symbol"] == symbol) &
-
-        (log["Signal"] == signal) &
-
-        (log["Entry"] == entry) &
-
-        (log["Status"] == "OPEN")
-
-    ]
-
-    return not open_trades.empty
-
-def add_paper_trade(trade):
-
-    log = load_log()
-
-    if trade_exists(log, trade["Symbol"], trade["Signal"], trade["Entry"]):
-
-        return
-
-    new_trade = {
-
-        "Opened": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-
-        "Closed": "",
-
-        "Symbol": trade["Symbol"],
-
-        "Direction": trade["Direction"],
-
-        "Signal": trade["Signal"],
-
-        "Grade": trade["Grade"],
-
-        "Score": trade["Score"],
-
-        "Entry": trade["Entry"],
-
-        "Stop": trade["Stop"],
-
-        "Target": trade["Target"],
-
-        "Shares": trade["Shares"],
-
-        "Status": "OPEN",
-
-        "Exit Price": "",
-
-        "Result": "",
-
-        "Paper P/L": ""
-
-    }
-
-    log = pd.concat([log, pd.DataFrame([new_trade])], ignore_index=True)
-
-    save_log(log)
-
-def update_open_trades():
-
-    log = load_log()
-
-    if log.empty:
-
-        return log
-
-    for i, row in log.iterrows():
-
-        if row["Status"] != "OPEN":
-
-            continue
-
-        price = get_current_price(row["Symbol"])
-
-        if price is None:
-
-            continue
-
-        entry = float(row["Entry"])
-
-        stop = float(row["Stop"])
-
-        target = float(row["Target"])
-
-        shares = int(row["Shares"])
-
-        direction = row["Direction"]
-
-        result = None
-
-        exit_price = None
-
-        if direction == "BUY":
-
-            if price <= stop:
-
-                result = "LOSS"
-
-                exit_price = stop
-
-            elif price >= target:
-
-                result = "WIN"
-
-                exit_price = target
-
-        elif direction == "SELL":
-
-            if price >= stop:
-
-                result = "LOSS"
-
-                exit_price = stop
-
-            elif price <= target:
-
-                result = "WIN"
-
-                exit_price = target
-
-        if result:
-
-            pnl = (exit_price - entry) * shares if direction == "BUY" else (entry - exit_price) * shares
-
-            log.at[i, "Closed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            log.at[i, "Status"] = "CLOSED"
-
-            log.at[i, "Exit Price"] = round(exit_price, 2)
-
-            log.at[i, "Result"] = result
-
-            log.at[i, "Paper P/L"] = round(pnl, 2)
-
-            send_sms(f"PAPER TRADE {result}: {row['Symbol']} | Exit {round(exit_price,2)} | P/L ${round(pnl,2)}")
-
-    save_log(log)
-
-    return log
-
-def show_performance(log):
-
-    closed = log[log["Status"] == "CLOSED"]
-
-    if closed.empty:
-
-        st.info("No closed paper trades yet.")
-
-        return
-
-    wins = closed[closed["Result"] == "WIN"]
-
-    losses = closed[closed["Result"] == "LOSS"]
-
-    total = len(closed)
-
-    win_rate = round((len(wins) / total) * 100, 1)
-
-    pnl = pd.to_numeric(closed["Paper P/L"], errors="coerce").fillna(0).sum()
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("Closed Trades", total)
-
-    c2.metric("Wins", len(wins))
-
-    c3.metric("Losses", len(losses))
-
-    c4.metric("Win Rate", f"{win_rate}%")
-
-    st.metric("Net Paper P/L", f"${round(pnl, 2)}")
+# ---------- MAIN ----------
 
 def run():
 
-    open_now, now_et = market_is_open()
+    open_now, now = market_is_open()
 
-    st.subheader("Market Hours")
+    st.subheader("Market")
 
-    st.metric("Current ET Time", now_et.strftime("%I:%M:%S %p"))
-
-    if open_now:
-
-        st.success("Market OPEN — alerts enabled")
-
-    else:
-
-        st.warning("After hours — monitoring only")
-
-    log = update_open_trades()
+    st.metric("Time", now.strftime("%I:%M:%S"))
 
     spy = analyze("SPY")
 
-    if spy is None:
-
-        st.error("SPY failed")
+    if not spy:
 
         return
 
     market = get_market(spy["change"])
-
-    st.subheader("Market")
-
-    st.metric("SPY", round(spy["price"], 2))
-
-    st.metric("20m %", round(spy["change"], 3))
 
     st.metric("Market", market)
 
@@ -582,7 +286,7 @@ def run():
 
         d = analyze(s)
 
-        if d is None:
+        if not d:
 
             continue
 
@@ -600,53 +304,19 @@ def run():
 
         top = df.iloc[0]
 
-        st.subheader("🚨 Top Setup")
+        st.subheader("Top Setup")
 
-        st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
+        st.write(top)
 
-        st.success(
+        if open_now and send_texts:
 
-            f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']} | "
-
-            f"Volume Strength {top['Volume Strength']}x"
-
-        )
-
-        if open_now and "STRONG" in top["Signal"] and send_texts and can_alert(top["Symbol"], top["Signal"]):
-
-            msg = (
-
-                f"{top['Symbol']} {top['Signal']} | "
-
-                f"Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']} | "
-
-                f"Volume {top['Volume Strength']}x"
-
-            )
-
-            if send_sms(msg):
+            if send_sms(f"{top['Symbol']} BUY @ {top['Entry']}"):
 
                 st.success("SMS sent")
 
-            add_paper_trade(top)
-
-        st.subheader("Ranked Setups")
-
-        st.dataframe(df)
-
     else:
 
-        st.info("No setups passing volume filter")
-
-    st.subheader("Paper Trade Performance")
-
-    log = load_log()
-
-    show_performance(log)
-
-    st.subheader("Paper Trade Log")
-
-    st.dataframe(log.tail(20), use_container_width=True)
+        st.info("No setups")
 
 run()
 
