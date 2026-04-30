@@ -6,401 +6,159 @@ import pandas as pd
 
 import time
 
-from datetime import datetime, time as dtime
-
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
 from twilio.rest import Client
 
-st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
+# ========================
 
-st.title("📈 Trading Scanner PRO")
+# TWILIO SETUP
 
-st.caption("Auto mode ON. Refreshes every 60 seconds.")
+# ========================
 
-# ---------- SETTINGS ----------
+try:
 
-st.sidebar.header("Scanner Settings")
+    client = Client(
 
-symbols_input = st.sidebar.text_input(
+        st.secrets["TWILIO_ACCOUNT_SID"],
 
-    "Watchlist",
+        st.secrets["TWILIO_AUTH_TOKEN"]
 
-    "SPY, QQQ, AAPL, MSFT, NVDA, TSLA"
+    )
 
-)
+    TWILIO_FROM = st.secrets["TWILIO_PHONE_NUMBER"]
 
-symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
+    YOUR_PHONE = st.secrets["YOUR_PHONE_NUMBER"]
 
-send_texts = st.sidebar.checkbox("Send SMS Alerts", True)
+except:
 
-st.sidebar.subheader("Risk Settings")
+    client = None
 
-account_size = st.sidebar.number_input("Account Size ($)", value=1000)
+def send_sms(msg):
 
-risk_percent = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0)
+    if client:
 
-st.sidebar.subheader("Trade Plan")
+        try:
 
-entry_buffer_percent = st.sidebar.slider("Entry Buffer (%)", 0.05, 1.0, 0.15)
+            client.messages.create(
 
-stop_percent = st.sidebar.slider("Stop Loss (%)", 0.5, 5.0, 1.0)
+                body=msg,
 
-reward_ratio = st.sidebar.slider("Reward Ratio", 1.0, 5.0, 2.0)
+                from_=TWILIO_FROM,
 
-minimum_score = 40
+                to=YOUR_PHONE
 
-cooldown_minutes = 15
+            )
 
-# ---------- STATE ----------
+            return True
 
-if "last_alerts" not in st.session_state:
+        except Exception as e:
 
-    st.session_state.last_alerts = {}
-
-# ---------- MARKET HOURS ----------
-
-def market_is_open():
-
-    now = datetime.now(ZoneInfo("America/New_York"))
-
-    market_open = dtime(9, 30)
-
-    market_close = dtime(16, 0)
-
-    is_weekday = now.weekday() < 5
-
-    is_open_time = market_open <= now.time() <= market_close
-
-    return is_weekday and is_open_time, now
-
-# ---------- SMS ----------
-
-def send_sms(message):
-
-    try:
-
-        client = Client(
-
-            st.secrets["TWILIO_ACCOUNT_SID"],
-
-            st.secrets["TWILIO_AUTH_TOKEN"]
-
-        )
-
-        client.messages.create(
-
-            body=message,
-
-            from_=st.secrets["TWILIO_PHONE_NUMBER"],
-
-            to=st.secrets["YOUR_PHONE_NUMBER"]
-
-        )
-
-        return True
-
-    except Exception as e:
-
-        st.error(f"SMS error: {e}")
-
-        return False
-
-# ---------- DATA ----------
-
-def get_data(symbol):
-
-    try:
-
-        data = yf.Ticker(symbol).history(period="1d", interval="5m")
-
-        if data is None or len(data) < 6:
-
-            return None
-
-        return data
-
-    except:
-
-        return None
-
-def analyze(symbol):
-
-    data = get_data(symbol)
-
-    if data is None:
-
-        return None
-
-    closes = data["Close"]
-
-    highs = data["High"]
-
-    lows = data["Low"]
-
-    price = closes.iloc[-1]
-
-    start = closes.iloc[-5]
-
-    prev = closes.iloc[-2]
-
-    change = ((price - start) / start) * 100
-
-    pullback = price < prev
-
-    return {
-
-        "price": price,
-
-        "change": change,
-
-        "pullback": pullback,
-
-        "recent_high": highs.iloc[-5:].max(),
-
-        "recent_low": lows.iloc[-5:].min(),
-
-    }
-
-# ---------- MARKET ----------
-
-def get_market(change):
-
-    if change >= 0.05:
-
-        return "BULLISH"
-
-    elif change <= -0.05:
-
-        return "BEARISH"
-
-    return "CHOPPY"
-
-# ---------- SIGNAL ----------
-
-def get_signal(change, pullback, market):
-
-    if market == "BULLISH":
-
-        if change >= 0.10 and pullback:
-
-            return "🚀 STRONG BUY"
-
-        elif change >= 0.05 and pullback:
-
-            return "🟢 BUY"
-
-    elif market == "BEARISH":
-
-        if change <= -0.10 and pullback:
-
-            return "🔻 STRONG SELL"
-
-        elif change <= -0.05 and pullback:
-
-            return "🔴 SELL"
-
-    elif market == "CHOPPY":
-
-        if change >= 0.20:
-
-            return "🔻 FADE SELL"
-
-        elif change <= -0.20:
-
-            return "🚀 FADE BUY"
-
-    return "⚪ NO TRADE"
-
-# ---------- TRADE ----------
-
-def build_trade(symbol, data, signal, market):
-
-    price = data["price"]
-
-    if "BUY" in signal:
-
-        entry = data["recent_high"] * (1 + entry_buffer_percent / 100)
-
-        stop = price * (1 - stop_percent / 100)
-
-        risk = entry - stop
-
-        target = entry + (risk * reward_ratio)
-
-    elif "SELL" in signal:
-
-        entry = data["recent_low"] * (1 - entry_buffer_percent / 100)
-
-        stop = price * (1 + stop_percent / 100)
-
-        risk = stop - entry
-
-        target = entry - (risk * reward_ratio)
-
-    else:
-
-        return None
-
-    if risk <= 0:
-
-        return None
-
-    shares = int((account_size * (risk_percent / 100)) // risk)
-
-    score = abs(data["change"]) * 100
-
-    if data["pullback"]:
-
-        score += 10
-
-    if "STRONG" in signal:
-
-        score += 10
-
-    if market == "BULLISH" and "BUY" in signal:
-
-        score += 10
-
-    if market == "BEARISH" and "SELL" in signal:
-
-        score += 10
-
-    if score < minimum_score:
-
-        return None
-
-    grade = "A+" if score >= 40 else "A"
-
-    return {
-
-        "Symbol": symbol,
-
-        "Signal": signal,
-
-        "Score": round(score, 1),
-
-        "Grade": grade,
-
-        "Entry": round(entry, 2),
-
-        "Stop": round(stop, 2),
-
-        "Target": round(target, 2),
-
-        "Shares": shares
-
-    }
-
-# ---------- ALERT CONTROL ----------
-
-def can_alert(symbol, signal):
-
-    key = f"{symbol}-{signal}"
-
-    now = time.time()
-
-    last = st.session_state.last_alerts.get(key)
-
-    if last is None or (now - last > cooldown_minutes * 60):
-
-        st.session_state.last_alerts[key] = now
-
-        return True
+            st.error(f"SMS Error: {e}")
 
     return False
 
-# ---------- RUN ----------
+# ========================
 
-def run():
+# UI
 
-    open_now, now_et = market_is_open()
+# ========================
 
-    st.subheader("Market Hours")
+st.title("📈 Trading Scanner PRO")
 
-    st.metric("Current ET Time", now_et.strftime("%I:%M %p"))
+st.subheader("Stop Alert System")
 
-    if open_now:
+# ========================
 
-        st.success("Market OPEN — alerts enabled")
+# TRADE INPUT
 
-    else:
+# ========================
 
-        st.warning("After hours — monitoring only (no alerts)")
+symbol = st.text_input("Symbol", value="AAPL").upper()
 
-    spy = analyze("SPY")
+entry = st.number_input("Entry Price", value=273.5)
 
-    if spy is None:
+stop = st.number_input("Stop Price", value=272.0)
 
-        st.error("SPY failed")
+target = st.number_input("Target Price", value=276.0)
 
-        return
+# ========================
 
-    market = get_market(spy["change"])
+# STORE STATE
 
-    st.subheader("Market")
+# ========================
 
-    st.metric("SPY", round(spy["price"], 2))
+if "trade_active" not in st.session_state:
 
-    st.metric("20m %", round(spy["change"], 3))
+    st.session_state.trade_active = False
 
-    st.metric("Market", market)
+if "alert_sent" not in st.session_state:
 
-    setups = []
+    st.session_state.alert_sent = False
 
-    for s in symbols:
+# ========================
 
-        d = analyze(s)
+# START TRADE
 
-        if d is None:
+# ========================
 
-            continue
+if st.button("Start Monitoring"):
 
-        signal = get_signal(d["change"], d["pullback"], market)
+    st.session_state.trade_active = True
 
-        trade = build_trade(s, d, signal, market)
+    st.session_state.alert_sent = False
 
-        if trade:
+    st.success("Monitoring started")
 
-            setups.append(trade)
+# ========================
 
-    if not setups:
+# STOP MONITOR
 
-        st.info("No setups")
+# ========================
 
-    else:
+if st.session_state.trade_active:
 
-        df = pd.DataFrame(setups).sort_values("Score", ascending=False)
+    data = yf.Ticker(symbol).history(period="1d", interval="1m")
 
-        top = df.iloc[0]
+    if not data.empty:
 
-        st.subheader("🚨 Top Setup")
+        price = data["Close"].iloc[-1]
 
-        st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
+        st.write(f"Current Price: {round(price,2)}")
 
-        st.success(f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']}")
+        # STOP HIT
 
-        if not open_now:
+        if price <= stop and not st.session_state.alert_sent:
 
-            st.warning("After hours — SMS blocked")
-
-        elif "STRONG" not in top["Signal"]:
-
-            st.warning("Not strong enough — no SMS")
-
-        elif send_texts and can_alert(top["Symbol"], top["Signal"]):
-
-            msg = f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} Stop {top['Stop']} Target {top['Target']}"
+            msg = f"{symbol} STOP HIT at {round(price,2)}"
 
             if send_sms(msg):
 
-                st.success("SMS sent")
+                st.error(msg)
 
-        st.subheader("Ranked")
+                st.session_state.alert_sent = True
 
-        st.dataframe(df)
+        # TARGET HIT
 
-run()
+        elif price >= target and not st.session_state.alert_sent:
+
+            msg = f"{symbol} TARGET HIT at {round(price,2)}"
+
+            if send_sms(msg):
+
+                st.success(msg)
+
+                st.session_state.alert_sent = True
+
+        else:
+
+            st.info("Monitoring...")
+
+# ========================
+
+# AUTO REFRESH
+
+# ========================
 
 time.sleep(60)
 
