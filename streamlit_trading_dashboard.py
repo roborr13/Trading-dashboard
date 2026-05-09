@@ -10,7 +10,7 @@ from twilio.rest import Client
 st.set_page_config(page_title="Trading Scanner PRO", layout="wide")
 
 st.title("📈 Trading Scanner PRO")
-st.caption("Stable Auto Watch Mode")
+st.caption("Stable Auto Watch Mode + Trend Scanner v1")
 
 LOG_FILE = Path("paper_trade_log.csv")
 
@@ -40,6 +40,7 @@ cooldown_minutes = 15
 if "last_alerts" not in st.session_state:
     st.session_state.last_alerts = {}
 
+
 def time_status():
     now = datetime.now(ZoneInfo("America/New_York"))
 
@@ -48,6 +49,7 @@ def time_status():
     market_open = weekday and dtime(9, 30) <= now.time() <= dtime(16, 0)
 
     return now, active, market_open
+
 
 def send_sms(message):
     try:
@@ -65,14 +67,26 @@ def send_sms(message):
         st.warning(f"SMS error: {e}")
         return False
 
+
 def get_data(symbol):
     try:
         data = yf.Ticker(symbol).history(period="1d", interval="5m")
         if data is None or len(data) < 10:
             return None
         return data
-    except:
+    except Exception:
         return None
+
+
+def get_daily_data(symbol):
+    try:
+        data = yf.Ticker(symbol).history(period="3mo", interval="1d")
+        if data is None or len(data) < 30:
+            return None
+        return data
+    except Exception:
+        return None
+
 
 def analyze(symbol):
     data = get_data(symbol)
@@ -105,11 +119,13 @@ def analyze(symbol):
         "volume_ok": volume_ratio >= min_volume_ratio
     }
 
+
 def get_current_price(symbol):
     data = get_data(symbol)
     if data is None:
         return None
     return float(data["Close"].iloc[-1])
+
 
 def get_market(change):
     if change >= 0.05:
@@ -117,6 +133,7 @@ def get_market(change):
     elif change <= -0.05:
         return "BEARISH"
     return "CHOPPY"
+
 
 def get_signal(change, pullback, market):
     if market == "BULLISH":
@@ -132,6 +149,7 @@ def get_signal(change, pullback, market):
             return "🔴 SELL"
 
     return "⚪ NO TRADE"
+
 
 def build_trade(symbol, data, signal, market):
     if not data["volume_ok"]:
@@ -192,161 +210,9 @@ def build_trade(symbol, data, signal, market):
         "Volume Strength": round(data["volume_ratio"], 2)
     }
 
-def can_alert(symbol, signal):
-    key = f"{symbol}-{signal}"
-    now = time.time()
-    last = st.session_state.last_alerts.get(key)
-
-    if last is None or now - last > cooldown_minutes * 60:
-        st.session_state.last_alerts[key] = now
-        return True
-
-    return False
-
-def load_log():
-    if LOG_FILE.exists():
-        return pd.read_csv(LOG_FILE)
-
-    return pd.DataFrame(columns=[
-        "Opened", "Closed", "Symbol", "Direction", "Signal", "Grade", "Score",
-        "Entry", "Stop", "Target", "Shares", "Status",
-        "Exit Price", "Result", "Paper P/L"
-    ])
-
-def save_log(df):
-    df.to_csv(LOG_FILE, index=False)
-
-def add_paper_trade(trade):
-    log = load_log()
-
-    if not log.empty:
-        existing = log[
-            (log["Symbol"] == trade["Symbol"]) &
-            (log["Signal"] == trade["Signal"]) &
-            (log["Status"] == "OPEN")
-        ]
-        if not existing.empty:
-            return
-
-    new_trade = {
-        "Opened": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Closed": "",
-        "Symbol": trade["Symbol"],
-        "Direction": trade["Direction"],
-        "Signal": trade["Signal"],
-        "Grade": trade["Grade"],
-        "Score": trade["Score"],
-        "Entry": trade["Entry"],
-        "Stop": trade["Stop"],
-        "Target": trade["Target"],
-        "Shares": trade["Shares"],
-        "Status": "OPEN",
-        "Exit Price": "",
-        "Result": "",
-        "Paper P/L": ""
-    }
-
-    log = pd.concat([log, pd.DataFrame([new_trade])], ignore_index=True)
-    save_log(log)
-
-def update_open_trades():
-    log = load_log()
-
-    if log.empty:
-        return log
-
-    for i, row in log.iterrows():
-        if row["Status"] != "OPEN":
-            continue
-
-        price = get_current_price(row["Symbol"])
-
-        if price is None:
-            continue
-
-        try:
-            entry = float(row["Entry"])
-            stop = float(row["Stop"])
-            target = float(row["Target"])
-            shares = int(float(row["Shares"]))
-        except:
-            continue
-
-        direction = row["Direction"]
-        result = None
-        exit_price = None
-
-        if direction == "BUY":
-            if price <= stop:
-                result = "LOSS"
-                exit_price = stop
-            elif price >= target:
-                result = "WIN"
-                exit_price = target
-
-        elif direction == "SELL":
-            if price >= stop:
-                result = "LOSS"
-                exit_price = stop
-            elif price <= target:
-                result = "WIN"
-                exit_price = target
-
-        if result:
-            pnl = (exit_price - entry) * shares if direction == "BUY" else (entry - exit_price) * shares
-
-            log.at[i, "Closed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log.at[i, "Status"] = "CLOSED"
-            log.at[i, "Exit Price"] = round(exit_price, 2)
-            log.at[i, "Result"] = result
-            log.at[i, "Paper P/L"] = round(pnl, 2)
-
-            send_sms(
-                f"PAPER TRADE {result}: {row['Symbol']} | Exit {round(exit_price,2)} | P/L ${round(pnl,2)}"
-            )
-
-    save_log(log)
-    return log
-
-def show_performance(log):
-    closed = log[log["Status"] == "CLOSED"]
-
-    if closed.empty:
-        st.info("No closed paper trades yet.")
-        return
-
-    wins = closed[closed["Result"] == "WIN"]
-    losses = closed[closed["Result"] == "LOSS"]
-
-    total = len(closed)
-    win_rate = round((len(wins) / total) * 100, 1)
-    pnl = pd.to_numeric(closed["Paper P/L"], errors="coerce").fillna(0).sum()
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Closed Trades", total)
-    c2.metric("Wins", len(wins))
-    c3.metric("Losses", len(losses))
-    c4.metric("Win Rate", f"{win_rate}%")
-
-    st.metric("Net Paper P/L", f"${round(pnl, 2)}")
-
-# ---------------- TREND SCANNER V1 ----------------
-def get_daily_data(symbol):
-    try:
-        data = yf.Ticker(symbol).history(period="3mo", interval="1d")
-
-        if data is None or len(data) < 30:
-            return None
-
-        return data
-
-    except:
-        return None
-
 
 def analyze_trend(symbol):
     data = get_daily_data(symbol)
-
     if data is None:
         return None
 
@@ -355,33 +221,16 @@ def analyze_trend(symbol):
     volume = data["Volume"]
 
     price = float(close.iloc[-1])
-
     sma20 = float(close.rolling(20).mean().iloc[-1])
-
-    sma50 = (
-        float(close.rolling(50).mean().iloc[-1])
-        if len(close) >= 50
-        else sma20
-    )
-
+    sma50 = float(close.rolling(50).mean().iloc[-1]) if len(close) >= 50 else sma20
     high20 = float(high.iloc[-20:].max())
 
-    five_day_change = (
-        (price - close.iloc[-6]) / close.iloc[-6]
-    ) * 100
-
-    one_month_change = (
-        (price - close.iloc[-21]) / close.iloc[-21]
-    ) * 100
+    five_day_change = ((price - close.iloc[-6]) / close.iloc[-6]) * 100
+    one_month_change = ((price - close.iloc[-21]) / close.iloc[-21]) * 100
 
     avg_volume = volume.iloc[-20:-1].mean()
     current_volume = volume.iloc[-1]
-
-    volume_ratio = (
-        current_volume / avg_volume
-        if avg_volume > 0
-        else 0
-    )
+    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
 
     score = 0
     reasons = []
@@ -420,10 +269,7 @@ def analyze_trend(symbol):
         return None
 
     target = price + (risk * reward_ratio)
-
-    shares = int(
-        (account_size * (risk_percent / 100)) // risk
-    )
+    shares = int((account_size * (risk_percent / 100)) // risk)
 
     if score >= 80:
         grade = "A+"
@@ -434,6 +280,7 @@ def analyze_trend(symbol):
 
     return {
         "Symbol": symbol,
+        "Direction": "BUY",
         "Signal": "📈 TREND BUY",
         "Grade": grade,
         "Score": round(score, 1),
@@ -444,20 +291,190 @@ def analyze_trend(symbol):
         "5D %": round(five_day_change, 2),
         "1M %": round(one_month_change, 2),
         "Volume Strength": round(volume_ratio, 2),
-        "Reasons": ", ".join(reasons)}
+        "Reasons": ", ".join(reasons)
+    }def can_alert(symbol, signal):
+    key = f"{symbol}-{signal}"
+    now = time.time()
+    last = st.session_state.last_alerts.get(key)
+
+    if last is None or now - last > cooldown_minutes * 60:
+        st.session_state.last_alerts[key] = now
+        return True
+
+    return False
+
+
+def load_log():
+    if LOG_FILE.exists():
+        return pd.read_csv(LOG_FILE)
+
+    return pd.DataFrame(columns=[
+        "Opened", "Closed", "Symbol", "Direction", "Signal", "Grade", "Score",
+        "Entry", "Stop", "Target", "Shares", "Status",
+        "Exit Price", "Result", "Paper P/L"
+    ])
+
+
+def save_log(df):
+    df.to_csv(LOG_FILE, index=False)
+
+
+def add_paper_trade(trade):
+    log = load_log()
+
+    if not log.empty:
+        existing = log[
+            (log["Symbol"] == trade["Symbol"]) &
+            (log["Signal"] == trade["Signal"]) &
+            (log["Status"] == "OPEN")
+        ]
+
+        if not existing.empty:
+            return
+
+    new_trade = {
+        "Opened": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Closed": "",
+        "Symbol": trade["Symbol"],
+        "Direction": trade["Direction"],
+        "Signal": trade["Signal"],
+        "Grade": trade["Grade"],
+        "Score": trade["Score"],
+        "Entry": trade["Entry"],
+        "Stop": trade["Stop"],
+        "Target": trade["Target"],
+        "Shares": trade["Shares"],
+        "Status": "OPEN",
+        "Exit Price": "",
+        "Result": "",
+        "Paper P/L": ""
+    }
+
+    log = pd.concat([log, pd.DataFrame([new_trade])], ignore_index=True)
+    save_log(log)
+
+
+def update_open_trades():
+    log = load_log()
+
+    if log.empty:
+        return log
+
+    for i, row in log.iterrows():
+
+        if row["Status"] != "OPEN":
+            continue
+
+        price = get_current_price(row["Symbol"])
+
+        if price is None:
+            continue
+
+        try:
+            entry = float(row["Entry"])
+            stop = float(row["Stop"])
+            target = float(row["Target"])
+            shares = int(float(row["Shares"]))
+        except Exception:
+            continue
+
+        direction = row["Direction"]
+
+        result = None
+        exit_price = None
+
+        if direction == "BUY":
+
+            if price <= stop:
+                result = "LOSS"
+                exit_price = stop
+
+            elif price >= target:
+                result = "WIN"
+                exit_price = target
+
+        elif direction == "SELL":
+
+            if price >= stop:
+                result = "LOSS"
+                exit_price = stop
+
+            elif price <= target:
+                result = "WIN"
+                exit_price = target
+
+        if result:
+
+            pnl = (
+                (exit_price - entry) * shares
+                if direction == "BUY"
+                else (entry - exit_price) * shares
+            )
+
+            log.at[i, "Closed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log.at[i, "Status"] = "CLOSED"
+            log.at[i, "Exit Price"] = round(exit_price, 2)
+            log.at[i, "Result"] = result
+            log.at[i, "Paper P/L"] = round(pnl, 2)
+
+            send_sms(
+                f"PAPER TRADE {result}: "
+                f"{row['Symbol']} | "
+                f"Exit {round(exit_price,2)} | "
+                f"P/L ${round(pnl,2)}"
+            )
+
+    save_log(log)
+    return log
+
+
+def show_performance(log):
+
+    closed = log[log["Status"] == "CLOSED"]
+
+    if closed.empty:
+        st.info("No closed paper trades yet.")
+        return
+
+    wins = closed[closed["Result"] == "WIN"]
+    losses = closed[closed["Result"] == "LOSS"]
+
+    total = len(closed)
+
+    win_rate = round((len(wins) / total) * 100, 1)
+
+    pnl = pd.to_numeric(
+        closed["Paper P/L"],
+        errors="coerce"
+    ).fillna(0).sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Closed Trades", total)
+    c2.metric("Wins", len(wins))
+    c3.metric("Losses", len(losses))
+    c4.metric("Win Rate", f"{win_rate}%")
+
+    st.metric("Net Paper P/L", f"${round(pnl, 2)}")
+
 
 def run():
+
     now, active, market_open = time_status()
 
     st.subheader("System Status")
 
     c1, c2, c3 = st.columns(3)
+
     c1.metric("Current ET Time", now.strftime("%I:%M:%S %p"))
     c2.metric("Watch Mode", "ACTIVE" if active else "SLEEP")
     c3.metric("Market", "OPEN" if market_open else "CLOSED")
 
     if not active:
-        st.warning("Sleep mode. Active scanning runs Monday–Friday, 9:20 AM to 5:40 PM ET.")
+        st.warning(
+            "Sleep mode. Active scanning runs Monday–Friday, "
+            "9:20 AM to 5:40 PM ET."
+        )
         return
 
     if market_open:
@@ -468,6 +485,7 @@ def run():
     update_open_trades()
 
     spy = analyze("SPY")
+
     if spy is None:
         st.error("SPY failed")
         return
@@ -475,38 +493,74 @@ def run():
     market = get_market(spy["change"])
 
     st.subheader("Market Direction")
+
     c1, c2 = st.columns(2)
+
     c1.metric("SPY 20m %", round(spy["change"], 3))
     c2.metric("Market", market)
 
     setups = []
 
     for symbol in symbols:
+
         data = analyze(symbol)
 
         if data is None:
             continue
 
-        signal = get_signal(data["change"], data["pullback"], market)
-        trade = build_trade(symbol, data, signal, market)
+        signal = get_signal(
+            data["change"],
+            data["pullback"],
+            market
+        )
+
+        trade = build_trade(
+            symbol,
+            data,
+            signal,
+            market
+        )
 
         if trade:
             setups.append(trade)
 
     if setups:
-        df = pd.DataFrame(setups).sort_values("Score", ascending=False)
-        top = df.iloc[0]
 
-        st.subheader("🚨 Top Setup")
-        st.error(f"{top['Symbol']} | {top['Grade']} | {top['Signal']}")
-        st.success(
-            f"Entry {top['Entry']} | Stop {top['Stop']} | Target {top['Target']} | Volume {top['Volume Strength']}x"
+        df = pd.DataFrame(setups).sort_values(
+            "Score",
+            ascending=False
         )
 
-        if market_open and "STRONG" in top["Signal"] and send_texts and can_alert(top["Symbol"], top["Signal"]):
+        top = df.iloc[0]
+
+        st.subheader("🚨 Intraday Top Setup")
+
+        st.error(
+            f"{top['Symbol']} | "
+            f"{top['Grade']} | "
+            f"{top['Signal']}"
+        )
+
+        st.success(
+            f"Entry {top['Entry']} | "
+            f"Stop {top['Stop']} | "
+            f"Target {top['Target']} | "
+            f"Volume {top['Volume Strength']}x"
+        )
+
+        if (
+            market_open
+            and "STRONG" in top["Signal"]
+            and send_texts
+            and can_alert(top["Symbol"], top["Signal"])
+        ):
+
             msg = (
-                f"{top['Symbol']} {top['Signal']} | Entry {top['Entry']} "
-                f"Stop {top['Stop']} Target {top['Target']} | Volume {top['Volume Strength']}x"
+                f"{top['Symbol']} {top['Signal']} | "
+                f"Entry {top['Entry']} "
+                f"Stop {top['Stop']} "
+                f"Target {top['Target']} | "
+                f"Volume {top['Volume Strength']}x"
             )
 
             if send_sms(msg):
@@ -514,18 +568,80 @@ def run():
 
             add_paper_trade(top)
 
-        st.subheader("Ranked Setups")
+        st.subheader("Ranked Intraday Setups")
         st.dataframe(df, use_container_width=True)
 
     else:
-        st.info("No setups")
+        st.info("No intraday setups")
+
+    st.subheader("📈 Trend Scanner v1")
+
+    trend_setups = []
+
+    for symbol in symbols:
+
+        trend = analyze_trend(symbol)
+
+        if trend:
+            trend_setups.append(trend)
+
+    if trend_setups:
+
+        trend_df = pd.DataFrame(trend_setups).sort_values(
+            "Score",
+            ascending=False
+        )
+
+        top_trend = trend_df.iloc[0]
+
+        st.error(
+            f"Top Trend: {top_trend['Symbol']} | "
+            f"{top_trend['Grade']} | "
+            f"{top_trend['Signal']}"
+        )
+
+        st.success(
+            f"Entry {top_trend['Entry']} | "
+            f"Stop {top_trend['Stop']} | "
+            f"Target {top_trend['Target']} | "
+            f"5D {top_trend['5D %']}% | "
+            f"1M {top_trend['1M %']}%"
+        )
+
+        if (
+            market_open
+            and send_texts
+            and can_alert(top_trend["Symbol"], "TREND")
+        ):
+
+            msg = (
+                f"TREND ALERT: {top_trend['Symbol']} | "
+                f"Grade {top_trend['Grade']} | "
+                f"Entry {top_trend['Entry']} "
+                f"Stop {top_trend['Stop']} "
+                f"Target {top_trend['Target']}"
+            )
+
+            if send_sms(msg):
+                st.success("Trend SMS sent")
+
+            add_paper_trade(top_trend)
+
+        st.dataframe(trend_df, use_container_width=True)
+
+    else:
+        st.info("No trend setups")
 
     st.subheader("Paper Trade Performance")
+
     log = load_log()
+
     show_performance(log)
 
     st.subheader("Paper Trade Log")
+
     st.dataframe(log.tail(20), use_container_width=True)
+
 
 run()
 
