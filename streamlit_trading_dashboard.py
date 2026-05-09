@@ -294,9 +294,9 @@ def analyze_trend(symbol):
         "Reasons": ", ".join(reasons)
     }
     def can_alert(symbol, signal):
-    key = f"{symbol}-{signal}"
-    now = time.time()
-    last = st.session_state.last_alerts.get(key)
+        key = f"{symbol}-{signal}"
+        now = time.time()
+        last = st.session_state.last_alerts.get(key)
 
     if last is None or now - last > cooldown_minutes * 60:
         st.session_state.last_alerts[key] = now
