@@ -292,7 +292,8 @@ def analyze_trend(symbol):
         "1M %": round(one_month_change, 2),
         "Volume Strength": round(volume_ratio, 2),
         "Reasons": ", ".join(reasons)
-    }def can_alert(symbol, signal):
+    }
+    def can_alert(symbol, signal):
     key = f"{symbol}-{signal}"
     now = time.time()
     last = st.session_state.last_alerts.get(key)
