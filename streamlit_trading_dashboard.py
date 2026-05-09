@@ -330,6 +330,122 @@ def show_performance(log):
 
     st.metric("Net Paper P/L", f"${round(pnl, 2)}")
 
+# ---------------- TREND SCANNER V1 ----------------
+def get_daily_data(symbol):
+    try:
+        data = yf.Ticker(symbol).history(period="3mo", interval="1d")
+
+        if data is None or len(data) < 30:
+            return None
+
+        return data
+
+    except:
+        return None
+
+
+def analyze_trend(symbol):
+    data = get_daily_data(symbol)
+
+    if data is None:
+        return None
+
+    close = data["Close"]
+    high = data["High"]
+    volume = data["Volume"]
+
+    price = float(close.iloc[-1])
+
+    sma20 = float(close.rolling(20).mean().iloc[-1])
+
+    sma50 = (
+        float(close.rolling(50).mean().iloc[-1])
+        if len(close) >= 50
+        else sma20
+    )
+
+    high20 = float(high.iloc[-20:].max())
+
+    five_day_change = (
+        (price - close.iloc[-6]) / close.iloc[-6]
+    ) * 100
+
+    one_month_change = (
+        (price - close.iloc[-21]) / close.iloc[-21]
+    ) * 100
+
+    avg_volume = volume.iloc[-20:-1].mean()
+    current_volume = volume.iloc[-1]
+
+    volume_ratio = (
+        current_volume / avg_volume
+        if avg_volume > 0
+        else 0
+    )
+
+    score = 0
+    reasons = []
+
+    if price > sma20:
+        score += 20
+        reasons.append("Above 20D")
+
+    if price > sma50:
+        score += 15
+        reasons.append("Above 50D")
+
+    if five_day_change >= 4:
+        score += 20
+        reasons.append("Strong 5D")
+
+    if one_month_change >= 8:
+        score += 20
+        reasons.append("Strong 1M")
+
+    if price >= high20 * 0.97:
+        score += 15
+        reasons.append("Near highs")
+
+    if volume_ratio >= 1.0:
+        score += 10
+        reasons.append("Volume OK")
+
+    if score < 65:
+        return None
+
+    stop = sma20
+    risk = price - stop
+
+    if risk <= 0:
+        return None
+
+    target = price + (risk * reward_ratio)
+
+    shares = int(
+        (account_size * (risk_percent / 100)) // risk
+    )
+
+    if score >= 80:
+        grade = "A+"
+    elif score >= 65:
+        grade = "A"
+    else:
+        grade = "B"
+
+    return {
+        "Symbol": symbol,
+        "Signal": "📈 TREND BUY",
+        "Grade": grade,
+        "Score": round(score, 1),
+        "Entry": round(price, 2),
+        "Stop": round(stop, 2),
+        "Target": round(target, 2),
+        "Shares": shares,
+        "5D %": round(five_day_change, 2),
+        "1M %": round(one_month_change, 2),
+        "Volume Strength": round(volume_ratio, 2),
+        "Reasons": ", ".join(reasons)}
+
 def run():
     now, active, market_open = time_status()
 
