@@ -320,6 +320,6 @@ def run():
 
 run()
 
-time.sleep(10)
+time.sleep(60)
 
 st.rerun()
