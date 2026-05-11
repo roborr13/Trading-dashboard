@@ -612,7 +612,6 @@ def run():
         if (
             market_open
             and send_texts
-            and can_alert(top_trend["Symbol"], "TREND")
         ):
 
             msg = (
