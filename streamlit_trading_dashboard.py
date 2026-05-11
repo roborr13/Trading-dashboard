@@ -553,7 +553,6 @@ def run():
             market_open
             and "STRONG" in top["Signal"]
             and send_texts
-            and can_alert(top["Symbol"], top["Signal"])
         ):
 
             msg = (
